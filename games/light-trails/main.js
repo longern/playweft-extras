@@ -4,7 +4,7 @@ const $ = (id) => document.getElementById(id);
 const canvas = $('board');
 const ctx = canvas.getContext('2d');
 const bridge = new PlayweftBridge();
-const colors = ['#63dfef', '#ff946f'];
+const colors = ['#78e9e4', '#ff9b7e'];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let state = null, ownIndex = -1, lastReceived = 0, serverAtReceipt = 0;
 let pulsePending = false, turnPending = false, rematchPending = false;
@@ -25,6 +25,7 @@ bridge.addEventListener('state', ({ detail }) => {
   ownIndex = state.players.findIndex((p) => p.id === bridge.context?.playerId);
   document.documentElement.style.setProperty('--accent', colors[Math.max(0, ownIndex)]);
   state.players.forEach((p, i) => {
+    $(`player-${i + 1}`).classList.toggle('is-you', i === ownIndex);
     setText(`name-${i + 1}`, p.name);
     setText(`role-${i + 1}`, i === ownIndex ? '你' : `0${i + 1}`);
     setText(`score-${i + 1}`, String(p.score));
@@ -103,7 +104,7 @@ function renderBoard() {
   const size = state?.size || 40;
   const unit = boardPixels / size;
   ctx.clearRect(0, 0, boardPixels, boardPixels);
-  ctx.strokeStyle = '#263044';
+  ctx.strokeStyle = '#82bdb418';
   ctx.lineWidth = .5;
   ctx.beginPath();
   for (let i = 1; i < size; i++) {
@@ -111,7 +112,25 @@ function renderBoard() {
     ctx.moveTo(0, i * unit); ctx.lineTo(boardPixels, i * unit);
   }
   ctx.stroke();
-  if (!state) return;
+  // Quiet, static light paths frame the invitation before a room is connected.
+  if (!state) {
+    const paths = [
+      [[0, 30], [7, 30], [7, 6], [18, 6], [18, 10]],
+      [[40, 10], [33, 10], [33, 34], [22, 34], [22, 30]],
+    ];
+    paths.forEach((points, index) => {
+      ctx.strokeStyle = colors[index]; ctx.globalAlpha = .45;
+      ctx.lineWidth = unit * .55;
+      ctx.beginPath();
+      points.forEach(([x, y], i) => i ? ctx.lineTo(x * unit, y * unit) : ctx.moveTo(x * unit, y * unit));
+      ctx.stroke();
+      const [x, y] = points.at(-1);
+      ctx.fillStyle = colors[index];
+      ctx.fillRect((x - .4) * unit, (y - .4) * unit, unit * .8, unit * .8);
+    });
+    ctx.globalAlpha = 1;
+    return;
+  }
   const progress = !reducedMotion && state.phase === 'playing'
     ? Math.max(0, Math.min(1, (serverNow() - state.lastStepAt) / state.stepMs)) : 1;
   const point = (cell) => ({ x: ((cell - 1) % size + .5) * unit, y: (Math.floor((cell - 1) / size) + .5) * unit });
@@ -124,19 +143,22 @@ function renderBoard() {
       head = { x: previous.x + (head.x - previous.x) * progress, y: previous.y + (head.y - previous.y) * progress };
     }
     ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
-    ctx.lineWidth = unit * .72;
+    ctx.lineWidth = unit * .7;
     ctx.strokeStyle = colors[index];
-    ctx.globalAlpha = .78;
+    ctx.globalAlpha = .72;
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length - 1; i++) ctx.lineTo(points[i].x, points[i].y);
     ctx.lineTo(head.x, head.y); ctx.stroke();
+    // A fine bright core keeps long trails legible without a costly full-board blur.
+    ctx.lineWidth = Math.max(.7, unit * .16);
+    ctx.strokeStyle = '#eafff5'; ctx.globalAlpha = .48; ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.shadowColor = colors[index]; ctx.shadowBlur = unit * 1.7;
     ctx.fillStyle = colors[index];
     ctx.fillRect(head.x - unit * .45, head.y - unit * .45, unit * .9, unit * .9);
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#0c1019';
+    ctx.fillStyle = '#081416';
     ctx.save(); ctx.translate(head.x, head.y); ctx.rotate(player.dir * Math.PI / 2);
     ctx.beginPath(); ctx.moveTo(unit * .25, 0); ctx.lineTo(-unit * .12, -unit * .21); ctx.lineTo(-unit * .12, unit * .21); ctx.fill(); ctx.restore();
     if (player.crashed) {
@@ -151,6 +173,10 @@ function renderUI() {
   const spectator = ownIndex < 0;
   const done = ['ended', 'closed'].includes(state.phase);
   const stale = !fresh() && !done;
+  const phases = { waiting: '等待入场', countdown: '准备出发', playing: '对决进行中', paused: '暂时停留', ended: '本局结束', closed: '对局结束' };
+  setText('phase-label', stale ? '正在重连' : phases[state.phase] || '等待入场');
+  const seconds = Math.floor((state.tick || 0) * state.stepMs / 1000);
+  setText('elapsed', `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
   setText('connection', done ? '本局结束' : stale ? '连接恢复中' : '已连接');
   $('connection').classList.toggle('bad', stale);
   $('left').disabled = $('right').disabled = !canTurn();
@@ -177,7 +203,7 @@ function renderUI() {
     setText('overlay-title', state.winner === 0 ? '势均力敌' : spectator ? `${state.winner === 1 ? '蓝方' : '橙方'}获胜` : state.winner === ownIndex + 1 ? '你赢了！' : '差一点，再来');
     setText('overlay-description', state.winner === 0 ? '同时碰撞，这局平局。' : '换个路线，再较量一局。');
     const ready = ownIndex >= 0 && state.players[ownIndex].rematch;
-    $('replay').firstChild.textContent = ready ? '等待好友确认 ' : rematchPending ? '正在确认… ' : '再来一局 ';
+    setText('replay-label', ready ? '等待好友确认' : rematchPending ? '正在确认…' : '再来一局');
   }
 }
 

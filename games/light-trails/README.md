@@ -12,6 +12,10 @@
 
 源码目录为 `games/light-trails/`，开发和部署地址均为 `/light-trails/`。Manifest 使用两人房间、Lua 服务端和 `persistence: "live"`。客户端通信代码位于 `src/playweft-client.js`。
 
+Manifest 顶层设置 `"orientation": "landscape"`，由 Playweft 请求横屏，必要时进入全屏后重试。浏览器可能不支持或拒绝锁定；游戏保留竖屏布局和旋转提示，不在 iframe 内重复申请全屏。横屏采用中央赛场、两侧比分和左右拇指按钮；适配安全区域、矮屏和减少动画偏好。局内计时来自服务端已执行的步数，暂停时不计时。
+
+界面版本为 `1.1.0`。部署后使用最新 Manifest 创建新房间，以应用横屏偏好和新版资源。
+
 在仓库根目录运行 `npm run dev` 可与真正的 Playweft 平台一起开发；`npm run dev:light-trails` 启动独立开发联调工具。具体地址和构建命令见 [仓库说明](../../README.md)。
 
 ## 同步与规则参数

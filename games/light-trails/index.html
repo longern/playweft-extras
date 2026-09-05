@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0c1019">
+  <meta name="theme-color" content="#081416">
   <meta name="description" content="双人光尾蛇：左右转向，别撞墙和任何尾迹。">
   <title>光尾蛇 · Light Trails</title>
   <link rel="icon" href="/light-trails.svg" type="image/svg+xml">
@@ -12,25 +12,45 @@
 </head>
 <body>
   <main class="game" aria-label="双人光尾蛇">
-    <header class="masthead"><h1>光尾蛇<span>LIGHT TRAILS</span></h1><span id="connection" class="connection">等待连接</span></header>
-    <section class="scoreboard" aria-label="比分">
-      <div class="player cyan"><span class="player-name" id="name-1">蓝方</span><span class="player-role" id="role-1">01</span></div>
-      <div class="scores"><strong id="score-1">0</strong><span>:</span><strong id="score-2">0</strong></div>
-      <div class="player coral"><span class="player-name" id="name-2">橙方</span><span class="player-role" id="role-2">02</span></div>
+    <header class="masthead">
+      <div class="brand"><svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M5 5v24h18V17h12"/><path d="M35 35V11H17v12H5"/></svg><h1>光尾蛇<span>LIGHT TRAILS</span></h1></div>
+      <span class="tagline">两条光轨。一个赢家。</span>
+      <span id="connection" class="connection">等待连接</span>
+    </header>
+    <section class="player cyan" id="player-1" aria-label="蓝方比分">
+      <div class="player-heading"><span class="player-code">PLAYER 01</span><span class="player-role" id="role-1">01</span></div>
+      <div class="player-identity"><span class="player-dot"></span><span class="player-name" id="name-1">蓝方</span></div>
+      <div class="score"><strong id="score-1">0</strong><span>WINS<span>获胜局数</span></span></div>
+      <svg class="trail-emblem" viewBox="0 0 180 100" fill="none" aria-hidden="true"><path d="M0 80h36V24h58v48h46V40h40"/><path class="trail-core" d="M0 80h36V24h58v48h46V40h40"/><rect x="170" y="35" width="10" height="10"/></svg>
+      <div class="pilot-note"><span>01 / KEEP MOVING</span><p>留下一道光。<br>把对手留在身后。</p></div>
     </section>
     <div class="arena-wrap">
+      <div class="arena-meta"><span id="round">第 1 局</span><span id="phase-label">等待入场</span><span class="arena-time" id="elapsed">00:00</span></div>
       <div class="arena">
         <canvas id="board" aria-label="两条彩色光尾蛇在方形场地内移动" role="img"></canvas>
-        <div class="overlay" id="overlay">
-          <div class="overlay-content"><span class="eyebrow" id="eyebrow">TWO PLAYERS · ONE ARENA</span><h2 id="overlay-title">等好友入场</h2><p id="overlay-description">左右转向，别撞墙和任何尾迹。</p><button class="replay" id="replay" hidden>再来一局 <span>↗</span></button><a id="launch" class="replay" hidden>在 Playweft 中打开 <span>↗</span></a></div>
-        </div>
+        <i class="corner top-left" aria-hidden="true"></i><i class="corner top-right" aria-hidden="true"></i><i class="corner bottom-left" aria-hidden="true"></i><i class="corner bottom-right" aria-hidden="true"></i>
+        <div class="overlay" id="overlay"><div class="overlay-content">
+          <svg class="duel-mark" viewBox="0 0 100 64" fill="none" aria-hidden="true"><path d="M6 8v38h38V28h12"/><path d="M94 56V18H56v18H44"/><rect x="51" y="23" width="10" height="10"/><rect x="39" y="31" width="10" height="10"/></svg>
+          <span class="eyebrow" id="eyebrow">TWO PLAYERS · ONE ARENA</span>
+          <h2 id="overlay-title">等好友入场</h2><p id="overlay-description">左右转向，别撞墙和任何尾迹。</p>
+          <button class="replay" id="replay" hidden><span id="replay-label">再来一局</span><span aria-hidden="true">↗</span></button>
+          <a id="launch" class="replay" hidden>在 Playweft 中打开 <span aria-hidden="true">↗</span></a>
+        </div></div>
       </div>
+      <div class="arena-caption"><span>别撞墙 · 别碰光轨</span><span>活到最后</span></div>
     </div>
-    <footer class="bottom">
-      <div class="round-info"><span id="round">第 1 局</span><p id="hint" aria-live="polite">左右转向，别撞墙和任何尾迹。</p></div>
-      <div class="controls" id="controls"><button id="left" class="turn" aria-label="向左转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M25 25v-9a7 7 0 0 0-7-7H6m0 0 6-6M6 9l6 6"/></svg><span>左转</span><kbd>← / A</kbd></button><button id="right" class="turn" aria-label="向右转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 25v-9a7 7 0 0 1 7-7h12m0 0-6-6m6 6-6 6"/></svg><span>右转</span><kbd>→ / D</kbd></button></div>
-      <p class="spectator" id="spectator" hidden>正在观战</p>
-    </footer>
+    <section class="player coral" id="player-2" aria-label="橙方比分">
+      <div class="player-heading"><span class="player-code">PLAYER 02</span><span class="player-role" id="role-2">02</span></div>
+      <div class="player-identity"><span class="player-dot"></span><span class="player-name" id="name-2">橙方</span></div>
+      <div class="score"><strong id="score-2">0</strong><span>WINS<span>获胜局数</span></span></div>
+      <svg class="trail-emblem" viewBox="0 0 180 100" fill="none" aria-hidden="true"><path d="M180 80h-36V24H86v48H40V40H0"/><path class="trail-core" d="M180 80h-36V24H86v48H40V40H0"/><rect x="0" y="35" width="10" height="10"/></svg>
+      <div class="pilot-note"><span>02 / STAY SHARP</span><p>下一个转角，<br>胜负由你改写。</p></div>
+    </section>
+    <div class="controls" id="controls">
+      <button id="left" class="turn turn-left" aria-label="向左转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M25 25v-9a7 7 0 0 0-7-7H6m0 0 6-6M6 9l6 6"/></svg><span>左转<small>TURN LEFT</small></span><kbd>← / A</kbd></button>
+      <button id="right" class="turn turn-right" aria-label="向右转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 25v-9a7 7 0 0 1 7-7h12m0 0-6-6m6 6-6 6"/></svg><span>右转<small>TURN RIGHT</small></span><kbd>→ / D</kbd></button>
+    </div>
+    <footer class="bottom"><span class="edition">PLAYWEFT <span>/</span> EXTRAS 001</span><p id="hint" aria-live="polite">左右转向，别撞墙和任何尾迹。</p><span class="spectator" id="spectator" hidden>正在观战</span><span class="rotate-hint">↻ 横过手机，视野更开阔</span><span class="room-label">双人实时对决</span></footer>
   </main>
 </body>
 </html>
