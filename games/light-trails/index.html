@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c1019">
+  <meta name="description" content="双人光尾蛇：左右转向，别撞墙和任何尾迹。">
+  <title>光尾蛇 · Light Trails</title>
+  <link rel="icon" href="/light-trails.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./main.js"></script>
+</head>
+<body>
+  <main class="game" aria-label="双人光尾蛇">
+    <header class="masthead"><h1>光尾蛇<span>LIGHT TRAILS</span></h1><span id="connection" class="connection">等待连接</span></header>
+    <section class="scoreboard" aria-label="比分">
+      <div class="player cyan"><span class="player-name" id="name-1">蓝方</span><span class="player-role" id="role-1">01</span></div>
+      <div class="scores"><strong id="score-1">0</strong><span>:</span><strong id="score-2">0</strong></div>
+      <div class="player coral"><span class="player-name" id="name-2">橙方</span><span class="player-role" id="role-2">02</span></div>
+    </section>
+    <div class="arena-wrap">
+      <div class="arena">
+        <canvas id="board" aria-label="两条彩色光尾蛇在方形场地内移动" role="img"></canvas>
+        <div class="overlay" id="overlay">
+          <div class="overlay-content"><span class="eyebrow" id="eyebrow">TWO PLAYERS · ONE ARENA</span><h2 id="overlay-title">等好友入场</h2><p id="overlay-description">左右转向，别撞墙和任何尾迹。</p><button class="replay" id="replay" hidden>再来一局 <span>↗</span></button><a id="launch" class="replay" hidden>在 Playweft 中打开 <span>↗</span></a></div>
+        </div>
+      </div>
+    </div>
+    <footer class="bottom">
+      <div class="round-info"><span id="round">第 1 局</span><p id="hint" aria-live="polite">左右转向，别撞墙和任何尾迹。</p></div>
+      <div class="controls" id="controls"><button id="left" class="turn" aria-label="向左转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M25 25v-9a7 7 0 0 0-7-7H6m0 0 6-6M6 9l6 6"/></svg><span>左转</span><kbd>← / A</kbd></button><button id="right" class="turn" aria-label="向右转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 25v-9a7 7 0 0 1 7-7h12m0 0-6-6m6 6-6 6"/></svg><span>右转</span><kbd>→ / D</kbd></button></div>
+      <p class="spectator" id="spectator" hidden>正在观战</p>
+    </footer>
+  </main>
+</body>
+</html>

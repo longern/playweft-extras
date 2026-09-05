@@ -1,0 +1,20 @@
+{
+  "name": "playweft-extras",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Creative multiplayer game experiments for Playweft.",
+  "scripts": {
+    "dev": "vite",
+    "dev:light-trails": "node scripts/dev.mjs",
+    "build": "vite build",
+    "check": "vite build --emptyOutDir && node --test tests/*.test.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": { "node": ">=22.12" },
+  "devDependencies": {
+    "vite": "8.1.5",
+    "wasmoon": "1.16.0",
+    "ws": "8.18.3"
+  }
+}

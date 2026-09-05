@@ -1,0 +1,14 @@
+/featured-games.json
+  Access-Control-Allow-Origin: *
+  Cache-Control: no-cache
+
+/:game/playweft.json
+  Access-Control-Allow-Origin: *
+  Cache-Control: no-cache
+
+/:game/game.lua
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: no-cache
+
+/*.svg
+  Cache-Control: public, max-age=86400, must-revalidate

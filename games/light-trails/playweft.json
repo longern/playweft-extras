@@ -1,0 +1,48 @@
+{
+  "manifest_version": 1,
+  "id": "/light-trails/",
+  "version": "1.0.0",
+  "protocol": {
+    "min": 1,
+    "max": 1
+  },
+  "start_url": "./",
+  "name": "Light Trails",
+  "name_localized": {
+    "zh-CN": "光尾蛇"
+  },
+  "description": "Turn left or right. Avoid every trail. Outlast your friend.",
+  "description_localized": {
+    "zh-CN": "左右转向，别撞墙和任何尾迹。双人实时对决。"
+  },
+  "categories": [
+    "games",
+    "arcade"
+  ],
+  "icons": [
+    {
+      "src": "../light-trails.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "background_color": "#0c1019",
+  "theme_color": "#0c1019",
+  "orientation": "any",
+  "help_url": "./help.html",
+  "modes": {
+    "room": {
+      "players": {
+        "min": 2,
+        "max": 2
+      },
+      "server": {
+        "runtime": "lua",
+        "entry": "./game.lua",
+        "persistence": "live"
+      }
+    }
+  },
+  "$schema": "https://play.longern.com/schemas/game-manifest-v1.json"
+}
