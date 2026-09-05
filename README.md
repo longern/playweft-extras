@@ -35,7 +35,9 @@ npm run build
 
 `dist/` 是一个静态站点，包含首页、`featured-games.json`、公共资源，以及每个游戏的 `index.html`、`help.html`、`playweft.json` 和 `game.lua`。客户端资源由 Vite 打包，所有游戏复用同一个构建流程。
 
-部署 `dist/` 到独立 HTTPS 静态站点即可。`public/_headers` 给推荐列表和 Manifest 配置 CORS；Lua 由平台服务端获取。不要添加阻止平台 iframe 嵌入的 `X-Frame-Options`。本仓库不保存部署账号、凭据或站点专属配置。
+部署 `dist/` 到独立 HTTPS 静态站点即可。`public/_headers` 给推荐列表和 Manifest 配置 CORS；Lua 由平台服务端获取。不要添加阻止平台 iframe 嵌入的 `X-Frame-Options`。本仓库不保存部署账号或凭据。
+
+Cloudflare Workers Builds 使用仓库根目录，部署命令为 `npx wrangler deploy`。仓库内的 `wrangler.jsonc` 明确指定静态资源目录 `dist/`，并在部署前执行 `npm run build`，因此平台的构建命令可以留空。无需 Cloudflare Vite 插件，也无需自动改写 `vite.config.js`。
 
 ## 目录
 

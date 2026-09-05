@@ -1,4 +1,5 @@
 node_modules/
 dist/
 test-results/
+.wrangler/
 .DS_Store
