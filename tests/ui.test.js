@@ -23,7 +23,7 @@ async function mount() {
     async action(action) { actions.push(action); return { accepted: true }; }
   }
   const canvas = elements.get('board');
-  canvas.getBoundingClientRect = () => ({ width: 480, height: 480 });
+  canvas.getBoundingClientRect = () => ({ width: 480, height: 270 });
   canvas.getContext = () => new Proxy({}, { get: (target, prop) => target[prop] ?? (() => {}) });
   const scope = {
     PlayweftBridge: Bridge,
@@ -36,7 +36,7 @@ async function mount() {
   const script = (await readFile(new URL('../games/light-trails/main.js', import.meta.url), 'utf8')).replace(/^import[^\n]+\n/, '');
   vm.runInNewContext(script, scope);
   function snapshot(phase, extra = {}) {
-    const state = { size: 40, stepMs: 120, tick: 500, lastStepAt: 60000, startsAt: 63000, round: 2, phase,
+    const state = { width: 48, height: 27, stepMs: 120, tick: 500, lastStepAt: 60000, startsAt: 63000, round: 2, phase,
       players: [
         { id: 'blue', name: '蓝方', score: 2, dir: 0, trail: [401, 402], rematch: false },
         { id: 'orange', name: '橙方', score: 1, dir: 2, trail: [800, 799], rematch: false },

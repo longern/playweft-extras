@@ -15,12 +15,12 @@ async function act(state, index, time, type = 'pulse', extra = {}) {
     actor: { id: `p${index}`, role: 'player' }, actionAt: time, serverTime: time,
   });
 }
-async function arena(a = [10, 10, 0], b = [30, 30, 2]) {
+async function arena(a = [10, 10, 0], b = [36, 22, 2]) {
   const s = await setup();
   s.phase = 'playing'; s.lastStepAt = 5000;
-  s.board = Array.from({ length: 40 }, () => '0'.repeat(40));
+  s.board = Array.from({ length: s.height }, () => '0'.repeat(s.width));
   [a, b].forEach(([x, y, dir], i) => {
-    Object.assign(s.players[i], { x, y, dir, ready: true, lastSeen: 5000, trail: [y * 40 + x + 1] });
+    Object.assign(s.players[i], { x, y, dir, ready: true, lastSeen: 5000, trail: [y * s.width + x + 1] });
     s.board[y] = s.board[y].slice(0, x) + String(i + 1) + s.board[y].slice(x + 1);
   });
   return s;
@@ -38,7 +38,7 @@ test('waits for both clients, then starts a server-timed three-second countdown'
   }
   assert.equal(s.phase, 'playing'); assert.equal(s.tick, 0);
   s = (await act(s, 1, 4320)).state;
-  assert.equal(s.tick, 1); assert.equal(s.players[0].x, 10); assert.equal(s.players[1].x, 29);
+  assert.equal(s.tick, 1); assert.equal(s.players[0].x, 12); assert.equal(s.players[1].x, 35);
 });
 
 test('pulse flooding cannot advance the authoritative clock', async () => {
@@ -56,7 +56,7 @@ test('left and right are relative quarter-turns; only one is queued per step', a
   s = (await act(s, 2, 5003, 'turn', { direction: 1 })).state;
   s = (await act(s, 1, 5120)).state;
   assert.equal(s.players[0].dir, 3); assert.equal(s.players[0].y, 9);
-  assert.equal(s.players[1].dir, 3); assert.equal(s.players[1].y, 29);
+  assert.equal(s.players[1].dir, 3); assert.equal(s.players[1].y, 21);
   assert.equal(s.players[0].turn, 0);
 });
 
@@ -69,7 +69,7 @@ test('an input arriving at the step deadline cannot rewrite an already-due move'
 });
 
 test('wall collision awards exactly one point; later pulses cannot rescore', async () => {
-  let s = await arena([39, 10, 0]);
+  let s = await arena([47, 10, 0]);
   s = (await act(s, 1, 5120)).state;
   assert.equal(s.phase, 'ended'); assert.equal(s.winner, 2);
   assert.equal(s.players[1].score, 1); assert.equal(s.players[0].crashed, true);
@@ -87,7 +87,7 @@ test('simultaneous head-on arrival is a draw independent of acting seat', async 
 });
 
 test('head swaps and simultaneous separate wall crashes are draws', async () => {
-  for (const pair of [[[10, 10, 0], [11, 10, 2]], [[39, 10, 0], [0, 30, 2]]]) {
+  for (const pair of [[[10, 10, 0], [11, 10, 2]], [[47, 10, 0], [0, 22, 2]]]) {
     const s = (await act(await arena(...pair), 1, 5120)).state;
     assert.equal(s.winner, 0); assert.equal(s.phase, 'ended');
   }
@@ -103,7 +103,7 @@ test('own trail and opponent trail are both solid', async () => {
 });
 
 test('rematch requires both players, clears the board and preserves scores', async () => {
-  let s = (await act(await arena([39, 10, 0]), 1, 5120)).state;
+  let s = (await act(await arena([47, 10, 0]), 1, 5120)).state;
   s = (await act(s, 1, 5200, 'rematch')).state;
   assert.equal(s.phase, 'ended'); assert.equal(s.players[0].rematch, true);
   s = (await act(s, 2, 5300, 'rematch')).state;
@@ -146,7 +146,7 @@ test('a long gap with both clients recently present cannot trigger unbounded cat
 });
 
 test('up to eight overdue simulation steps stay inside the Lua instruction budget', async () => {
-  const s = (await act(await arena([5, 5, 0], [35, 35, 2]), 1, 5960)).state;
+  const s = (await act(await arena([5, 5, 0], [40, 24, 2]), 1, 5960)).state;
   assert.equal(s.tick, 8); assert.equal(s.players[0].x, 13);
 });
 
@@ -170,8 +170,8 @@ test('leaving closes the match and prevents rematch; spectators leaving do not',
 
 test('a nearly full board stays below the platform JSON and table limits', async () => {
   const s = await arena();
-  s.players[0].trail = Array.from({ length: 800 }, (_, i) => i + 1);
-  s.players[1].trail = Array.from({ length: 800 }, (_, i) => i + 801);
+  s.players[0].trail = Array.from({ length: s.width * s.height - 1 }, (_, i) => i + 1);
+  s.players[1].trail = [s.width * s.height];
   const v = await runtime.call('view', s, {}, { viewer: { id: 'p1' } });
   assert.ok(Buffer.byteLength(JSON.stringify(s)) < 65536);
   assert.ok(Buffer.byteLength(JSON.stringify(v)) < 65536);
@@ -182,4 +182,27 @@ test('a nearly full board stays below the platform JSON and table limits', async
     }
   }
   limits(s); limits(v);
+});
+
+
+test('16:9 board uses distinct bounds, row encoding and symmetric spawns', async () => {
+  const s = await setup();
+  assert.equal(s.width / s.height, 16 / 9);
+  assert.equal(s.board.length, s.height);
+  assert.ok(s.board.every(row => row.length === s.width));
+  assert.equal(s.players[0].x + s.players[1].x, s.width - 1);
+  assert.equal(s.players[0].y + s.players[1].y, s.height - 1);
+  for (const p of s.players) assert.equal(p.trail[0], p.y * s.width + p.x + 1);
+  const v = (await runtime.call('view', s, {}, { viewer: { id: 'p1' } })).state;
+  assert.equal(v.width, s.width); assert.equal(v.height, s.height);
+  for (const position of [[47, 10, 0], [10, 26, 1], [0, 10, 2], [10, 0, 3]]) {
+    const next = (await act(await arena(position), 1, 5120)).state;
+    assert.equal(next.players[0].crashed, true, position.join(','));
+    assert.equal(next.winner, 2);
+  }
+  // Cells beyond the old square's right edge must remain playable.
+  const next = (await act(await arena([40, 10, 0]), 1, 5120)).state;
+  assert.equal(next.phase, 'playing');
+  assert.equal(next.players[0].x, 41);
+  assert.equal(next.players[0].trail.at(-1), 10 * s.width + 42);
 });

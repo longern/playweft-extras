@@ -1,6 +1,6 @@
 -- Server-authoritative, fixed-step simulation. No timers or client timestamps.
 -- Direction: 0 east, 1 south, 2 west, 3 north. Coordinates are zero-based.
-local SIZE, STEP_MS, COUNTDOWN_MS, STALE_MS = 40, 120, 3000, 1800
+local WIDTH, HEIGHT, STEP_MS, COUNTDOWN_MS, STALE_MS = 48, 27, 120, 3000, 1800
 local DX, DY = { 1, 0, -1, 0 }, { 0, 1, 0, -1 }
 
 local function reject(code, message)
@@ -11,10 +11,10 @@ local function accept(state)
   return { accepted = true, state = state, events = {} }
 end
 
-local function cell(x, y) return y * SIZE + x + 1 end
+local function cell(x, y) return y * WIDTH + x + 1 end
 
 local function occupied(state, x, y)
-  if x < 0 or y < 0 or x >= SIZE or y >= SIZE then return true end
+  if x < 0 or y < 0 or x >= WIDTH or y >= HEIGHT then return true end
   return string.sub(state.board[y + 1], x + 1, x + 1) ~= "0"
 end
 
@@ -30,9 +30,9 @@ local function new_round(state, now)
   state.phase, state.reason, state.winner = "waiting", "", 0
   state.startsAt, state.lastStepAt, state.tick = 0, now, 0
   state.board = {}
-  for y = 1, SIZE do state.board[y] = string.rep("0", SIZE) end
+  for y = 1, HEIGHT do state.board[y] = string.rep("0", WIDTH) end
   for i, p in ipairs(state.players) do
-    p.x, p.y, p.dir = i == 1 and 9 or 30, i == 1 and 19 or 20, i == 1 and 0 or 2
+    p.x, p.y, p.dir = i == 1 and 11 or 36, i == 1 and 12 or 14, i == 1 and 0 or 2
     p.turn, p.lastSeen, p.ready, p.rematch, p.crashed = 0, 0, false, false, false
     p.trail = {}
     paint(state, p, i)
@@ -113,7 +113,7 @@ end
 
 function setup(context)
   assert(#context.players == 2, "Light Trails requires exactly two players")
-  local state = { size = SIZE, stepMs = STEP_MS, round = 0, players = {} }
+  local state = { width = WIDTH, height = HEIGHT, stepMs = STEP_MS, round = 0, players = {} }
   for i, p in ipairs(context.players) do
     state.players[i] = { id = p.id, name = p.name or ("Player " .. i), score = 0 }
   end
@@ -161,7 +161,7 @@ function view(state, events, context)
       dir = p.dir, trail = p.trail, crashed = p.crashed, rematch = p.rematch,
       turn = p.id == context.viewer.id and p.turn or 0 }
   end
-  return { state = { size = state.size, stepMs = state.stepMs, round = state.round,
+  return { state = { width = state.width, height = state.height, stepMs = state.stepMs, round = state.round,
     phase = state.phase, reason = state.reason, winner = state.winner, tick = state.tick,
     startsAt = state.startsAt, lastStepAt = state.lastStepAt, players = players }, events = {} }
 end

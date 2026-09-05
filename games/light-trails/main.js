@@ -8,7 +8,7 @@ const colors = ['#78e9e4', '#ff9b7e'];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let state = null, ownIndex = -1, lastReceived = 0, serverAtReceipt = 0;
 let pulsePending = false, turnPending = false, rematchPending = false;
-let boardPixels = 0;
+let boardPixels = 0, boardHeight = 0;
 const setText = (id, value) => { if ($(id).textContent !== value) $(id).textContent = value; };
 
 function serverNow() { return serverAtReceipt + performance.now() - lastReceived; }
@@ -95,28 +95,31 @@ new ResizeObserver(() => {
   const rect = canvas.getBoundingClientRect();
   const dpr = Math.min(devicePixelRatio || 1, 2);
   boardPixels = rect.width;
+  boardHeight = rect.height;
   canvas.width = Math.round(rect.width * dpr);
   canvas.height = Math.round(rect.height * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }).observe(canvas);
 
 function renderBoard() {
-  const size = state?.size || 40;
-  const unit = boardPixels / size;
-  ctx.clearRect(0, 0, boardPixels, boardPixels);
+  const width = state?.width || 48, height = state?.height || 27;
+  const unit = boardPixels / width;
+  ctx.clearRect(0, 0, boardPixels, boardHeight);
   ctx.strokeStyle = '#82bdb418';
   ctx.lineWidth = .5;
   ctx.beginPath();
-  for (let i = 1; i < size; i++) {
-    ctx.moveTo(i * unit, 0); ctx.lineTo(i * unit, boardPixels);
-    ctx.moveTo(0, i * unit); ctx.lineTo(boardPixels, i * unit);
+  for (let x = 1; x < width; x++) {
+    ctx.moveTo(x * unit, 0); ctx.lineTo(x * unit, boardHeight);
+  }
+  for (let y = 1; y < height; y++) {
+    ctx.moveTo(0, y * unit); ctx.lineTo(boardPixels, y * unit);
   }
   ctx.stroke();
   // Quiet, static light paths frame the invitation before a room is connected.
   if (!state) {
     const paths = [
-      [[0, 30], [7, 30], [7, 6], [18, 6], [18, 10]],
-      [[40, 10], [33, 10], [33, 34], [22, 34], [22, 30]],
+      [[0, 20], [8, 20], [8, 5], [18, 5], [18, 9]],
+      [[48, 7], [40, 7], [40, 22], [30, 22], [30, 18]],
     ];
     paths.forEach((points, index) => {
       ctx.strokeStyle = colors[index]; ctx.globalAlpha = .45;
@@ -133,7 +136,7 @@ function renderBoard() {
   }
   const progress = !reducedMotion && state.phase === 'playing'
     ? Math.max(0, Math.min(1, (serverNow() - state.lastStepAt) / state.stepMs)) : 1;
-  const point = (cell) => ({ x: ((cell - 1) % size + .5) * unit, y: (Math.floor((cell - 1) / size) + .5) * unit });
+  const point = (cell) => ({ x: ((cell - 1) % width + .5) * unit, y: (Math.floor((cell - 1) / width) + .5) * unit });
   state.players.forEach((player, index) => {
     const points = player.trail.map(point);
     let head = points.at(-1);
