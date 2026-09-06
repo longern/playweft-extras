@@ -1,6 +1,7 @@
 import { PlayweftBridge } from '../../src/playweft-client.js';
 import { Predictor } from './prediction.js';
 import { RemoteMotion } from './remote-motion.js';
+import { CollisionPlayback } from './collision-playback.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
@@ -8,6 +9,8 @@ const ctx = canvas.getContext('2d');
 const bridge = new PlayweftBridge();
 const predictor = new Predictor();
 const remoteMotion = new RemoteMotion();
+const collisionPlayback = new CollisionPlayback();
+let renderedPlayers = [];
 let outbound = [], inFlight = 0, generation = 0, currentMatch;
 const colors = ['#78e9e4', '#ff9b7e'];
 let state = null, ownIndex = -1, lastReceived = 0;
@@ -27,7 +30,7 @@ bridge.addEventListener('initialize', ({ detail }) => {
 });
 bridge.addEventListener('state', ({ detail }) => {
   if (state?.round !== detail.state.round || detail.matchId !== currentMatch) {
-    outbound = []; generation++; predictor.state = null; predictor.pending = []; remoteMotion.reset();
+    outbound = []; generation++; predictor.state = null; predictor.pending = []; remoteMotion.reset(); collisionPlayback.reset(); renderedPlayers = [];
   }
   currentMatch = detail.matchId;
   state = detail.state;
@@ -38,6 +41,7 @@ bridge.addEventListener('state', ({ detail }) => {
   lastReceived = performance.now();
   ownIndex = state.players.findIndex((p) => p.id === bridge.context?.playerId);
   const receivedAt = performance.now();
+  collisionPlayback.receive(state, renderedPlayers, receivedAt);
   predictor.receive(state, ownIndex, detail.serverTime, receivedAt);
   remoteMotion.receive(state, receivedAt, predictor.now(receivedAt));
   if (!['playing', 'countdown'].includes(state.phase)) outbound = [];
@@ -47,7 +51,6 @@ bridge.addEventListener('state', ({ detail }) => {
     setText(`name-${i + 1}`, p.name);
     setText(`role-${i + 1}`, '你');
     $(`role-${i + 1}`).hidden = i !== ownIndex;
-    setText(`score-${i + 1}`, String(p.score));
   });
   setText('round', `第 ${state.round} 局`);
   $('controls').hidden = ownIndex < 0;
@@ -119,7 +122,7 @@ window.addEventListener('keydown', (event) => {
   if (heading !== undefined) { event.preventDefault(); steer(heading); }
 });
 $('replay').addEventListener('click', async () => {
-  if (rematchPending || ownIndex < 0 || state?.phase !== 'ended') return;
+  if (rematchPending || ownIndex < 0 || state?.phase !== 'ended' || collisionPlayback.pending(performance.now())) return;
   rematchPending = true;
   setText('hint', '');
   try { await action('rematch'); }
@@ -176,7 +179,8 @@ function renderBoard() {
   const projected = fresh() && !document.hidden ? predictor.project(performance.now()) : null;
   state.players.forEach((authoritative, index) => {
     const remote = fresh() && !document.hidden && index !== ownIndex ? remoteMotion.project(index, frameAt, renderTime) : null;
-    const player = index === ownIndex && projected ? projected : remote || { ...authoritative };
+    const player = collisionPlayback.project(index, frameAt) || (index === ownIndex && projected ? projected : remote || { ...authoritative });
+    renderedPlayers[index] = player;
     const points = player.trail.map(point);
     let head = points.at(-1);
     if (!head) return;
@@ -184,6 +188,14 @@ function renderBoard() {
       head = { x: player.head.x * unit, y: player.head.y * unit };
     }
     ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
+    // Confirmed trail cells are solid now. Never hide them behind a delayed head.
+    // Keep the complete authoritative obstacle visible beneath presentation motion.
+    ctx.strokeStyle = colors[index]; ctx.globalAlpha = .72; ctx.lineWidth = unit * .7;
+    ctx.beginPath();
+    authoritative.trail.forEach((cell, i) => {
+      const p = point(cell); if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
+    });
+    ctx.stroke();
     ctx.lineWidth = unit * .7;
     ctx.strokeStyle = colors[index];
     ctx.globalAlpha = .72;
@@ -204,7 +216,7 @@ function renderBoard() {
     ctx.beginPath(); ctx.moveTo(unit * .25, 0); ctx.lineTo(-unit * .12, -unit * .21); ctx.lineTo(-unit * .12, unit * .21); ctx.fill(); ctx.restore();
     if (player.crashed) {
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(head.x, head.y, unit * 1.2, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc((player.impactPoint?.x ?? head.x / unit) * unit, (player.impactPoint?.y ?? head.y / unit) * unit, unit * .8, 0, Math.PI * 2); ctx.stroke();
     }
   });
 }
@@ -212,6 +224,11 @@ function renderBoard() {
 function renderUI() {
   if (!state) return;
   const spectator = ownIndex < 0;
+  const finishing = collisionPlayback.pending(performance.now());
+  state.players.forEach((p, i) => {
+    const score = p.score - (finishing && state.winner === i + 1 ? 1 : 0);
+    setText(`score-${i + 1}`, String(score));
+  });
   const done = ['ended', 'closed'].includes(state.phase);
   const stale = !fresh() && !done;
   const seconds = Math.floor((state.tick || 0) * state.stepMs / 1000);
@@ -219,9 +236,9 @@ function renderUI() {
   $('connection').hidden = true;
   $('connection').classList.toggle('bad', stale);
   for (const id of ['up', 'down', 'left', 'right']) $(id).disabled = !canTurn();
-  $('overlay').hidden = state.phase === 'playing' && !stale;
+  $('overlay').hidden = finishing || (state.phase === 'playing' && !stale);
   $('overlay').classList.toggle('countdown', state.phase === 'countdown' && !stale);
-  $('replay').hidden = state.phase !== 'ended' || spectator;
+  $('replay').hidden = state.phase !== 'ended' || spectator || finishing;
   $('replay').disabled = rematchPending || (ownIndex >= 0 && state.players[ownIndex].rematch);
   const ownName = spectator ? '观战中' : `你是${ownIndex === 0 ? '蓝方' : '橙方'}`;
   $('eyebrow').hidden = true;

@@ -10,7 +10,7 @@ export class RemoteMotion {
     this.advanceAt = null;
     this.gaps = [];
     this.ages = [];
-    this.delay = 180;
+    this.delay = 60;
   }
   constructor() { this.reset(); }
   receive(state, now, serverNow) {
@@ -31,7 +31,10 @@ export class RemoteMotion {
       const percentile = values => [...values].sort((a, b) => a - b)[Math.floor((values.length - 1) * .9)] || 0;
       // Use actual advancing-snapshot cadence, not RTT alone. Duplicate-step
       // acknowledgements do not pretend that fresh movement has arrived.
-      const target = clamp(percentile(this.ages) + Math.max(state.stepMs, percentile(this.gaps)) + 20, state.stepMs * 1.5, 480);
+      // Buffer only jitter, not network age plus a whole packet interval. Straight
+      // extrapolation covers transit time; a deep buffer hides solid obstacles.
+      const lowGap = [...this.gaps].sort((a, b) => a - b)[Math.floor((this.gaps.length - 1) * .1)] || state.stepMs;
+      const target = clamp((percentile(this.gaps) - lowGap) / 2, 60, 120);
       this.delay = target > this.delay ? target : Math.max(target, this.delay - 2);
     }
     this.state = state;
@@ -50,19 +53,28 @@ export class RemoteMotion {
     const target = serverNow - this.delay;
     // Changing buffer depth changes playback speed slightly, never its position.
     const speed = 1 + clamp((target - this.cursor) / (state.stepMs * 4), -.15, .15);
-    this.cursor = Math.min(this.cursor + Math.min(dt, 100) * speed, state.lastStepAt + state.stepMs);
+    this.cursor = Math.min(this.cursor + Math.min(dt, 100) * speed, state.lastStepAt + state.stepMs * 3);
     const trail = player.trail;
     const cellPoint = cell => ({ x: (cell - 1) % state.width + .5, y: Math.floor((cell - 1) / state.width) + .5 });
     const latest = cellPoint(trail.at(-1));
     if (this.cursor > state.lastStepAt) {
-      // Only one straight cell, and never through a wall or a known trail.
-      const fraction = clamp((this.cursor - state.lastStepAt) / state.stepMs, 0, 1);
+      // At most three straight cells. Never invent a turn or cross a known solid.
+      const ahead = clamp((this.cursor - state.lastStepAt) / state.stepMs, 0, 3);
       const dx = [1, 0, -1, 0][player.dir], dy = [0, 1, 0, -1][player.dir];
-      const x = Math.floor(latest.x) + dx, y = Math.floor(latest.y) + dy;
-      const cell = y * state.width + x + 1;
-      const blocked = x < 0 || y < 0 || x >= state.width || y >= state.height || state.players.some(p => p.trail.includes(cell));
-      if (blocked) return { ...player, trail, head: latest };
-      return { ...player, trail: [...trail, cell], head: { x: latest.x + dx * fraction, y: latest.y + dy * fraction } };
+      const extended = [...trail], occupied = new Set(state.players.flatMap(p => p.trail));
+      let head = latest;
+      for (let step = 0; step < Math.ceil(ahead); step++) {
+        const x = Math.floor(latest.x) + dx * (step + 1), y = Math.floor(latest.y) + dy * (step + 1);
+        const cell = y * state.width + x + 1;
+        const wall = x < 0 || y < 0 || x >= state.width || y >= state.height;
+        const blocked = wall || occupied.has(cell);
+        const fraction = Math.min(ahead - step, blocked ? (wall ? .05 : .2) : 1);
+        head = { x: latest.x + dx * (step + fraction), y: latest.y + dy * (step + fraction) };
+        // Duplicate endpoint is a render sentinel, never an authoritative cell.
+        extended.push(blocked ? extended.at(-1) : cell);
+        if (blocked) break;
+      }
+      return { ...player, trail: extended, head };
     }
     const distance = Math.max(0, trail.length - 1 - (state.lastStepAt - this.cursor) / state.stepMs);
     const start = Math.floor(distance), fraction = distance - start;

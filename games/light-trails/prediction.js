@@ -85,10 +85,13 @@ export class Predictor {
       }
       const nx = x + [1, 0, -1, 0][dir], ny = y + [0, 1, 0, -1][dir];
       const cell = ny * state.width + nx + 1;
-      if (nx < 0 || ny < 0 || nx >= state.width || ny >= state.height || occupied.has(cell)) break;
-      const fraction = Math.min(1, ahead - step);
+      const wall = nx < 0 || ny < 0 || nx >= state.width || ny >= state.height;
+      const blocked = wall || occupied.has(cell);
+      const fraction = Math.min(blocked ? (wall ? .05 : .2) : 1, ahead - step);
       head = { x: x + .5 + (nx - x) * fraction, y: y + .5 + (ny - y) * fraction };
-      trail.push(cell); occupied.add(cell);
+      trail.push(blocked ? trail.at(-1) : cell);
+      if (blocked) break; // Wait visibly at contact; only the server can declare defeat.
+      occupied.add(cell);
       x = nx; y = ny;
     }
     return { ...player, trail, dir, head };

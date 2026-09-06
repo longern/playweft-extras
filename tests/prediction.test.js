@@ -32,7 +32,8 @@ test('prediction respects walls, known trails, reversal rules, queue bound and p
   const p = new Predictor(), s = snapshot();
   s.players[1].trail.push(492);
   p.receive(s, 0, 1000, 0);
-  assert.deepEqual(p.project(180).head, { x: 10.5, y: 10.5 });
+  assert.deepEqual(p.project(180).head, { x: 10.7, y: 10.5 });
+  assert.equal(p.project(180).crashed, undefined, "contact prediction cannot declare a loss");
   assert.equal(p.enqueue(2, 0), null);
   for (const dir of [3, 2, 1, 0, 3, 2]) assert.ok(p.enqueue(dir, 0));
   assert.equal(p.enqueue(1, 0), null);

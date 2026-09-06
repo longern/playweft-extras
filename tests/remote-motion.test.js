@@ -44,10 +44,11 @@ test('remote straight movement stays continuous with 200 ms updates and jitter',
   assert.ok(result.stopsOld > 100, JSON.stringify(result));
   assert.equal(result.stopsNew, 0, JSON.stringify(result));
   assert.equal(result.backwards, 0);
+  assert.ok(result.delay >= 60 && result.delay <= 120, "smoothness must not conceal multiple solid cells");
   assert.ok(result.maxJump <= 10 / 120 * 1.151, JSON.stringify(result));
 });
 
-test('remote extrapolation is limited to one cell and stops at known walls or trails', () => {
+test('remote extrapolation is limited to three cells and stops at known walls or trails', () => {
   for (const obstacle of ['none', 'wall', 'trail']) {
     const motion = new RemoteMotion();
     const state = straight(2400);
@@ -59,11 +60,11 @@ test('remote extrapolation is limited to one cell and stops at known walls or tr
     motion.receive(state, 0, 2400);
     let frame;
     for (let time = 0; time <= 4000; time += 10) frame = motion.project(0, time, 2400 + time);
-    if (obstacle === 'none') assert.equal(frame.head.x, 21.5);
-    if (obstacle === 'trail') assert.equal(frame.head.x, 20.5);
+    if (obstacle === 'none') assert.equal(frame.head.x, 23.5);
+    if (obstacle === 'trail') assert.equal(frame.head.x, 20.7);
     if (obstacle === 'wall') {
-      assert.deepEqual(frame.head, {x:47.5,y:10.5});
-      assert.equal(frame.trail.length, 48);
+      assert.deepEqual(frame.head, {x:47.55,y:10.5});
+      assert.equal(frame.trail.length, 49);
     }
     assert.equal(state.players[0].trail.length, obstacle === 'wall' ? 48 : 21, 'rendering must not add authoritative cells');
   }

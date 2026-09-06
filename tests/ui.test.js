@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { Predictor } from '../games/light-trails/prediction.js';
 import { RemoteMotion } from '../games/light-trails/remote-motion.js';
+import { CollisionPlayback } from '../games/light-trails/collision-playback.js';
 
 // Exercise the shipped client with room snapshots, without a browser or a network.
 // Missing HTML IDs and broken render/input paths fail just as they do in the page.
@@ -17,7 +18,7 @@ async function mount({ standalone = false, deferred = false } = {}) {
       listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; },
     }];
   }));
-  let onFrame, bridge, onPulse;
+  let onFrame, bridge, onPulse, now = 1000;
   const actions = [], replies = [];
   class Bridge extends EventTarget {
     context = { playerId: 'blue' };
@@ -28,10 +29,10 @@ async function mount({ standalone = false, deferred = false } = {}) {
   canvas.getBoundingClientRect = () => ({ width: 480, height: 270 });
   canvas.getContext = () => new Proxy({}, { get: (target, prop) => target[prop] ?? (() => {}) });
   const scope = {
-    PlayweftBridge: Bridge, Predictor, RemoteMotion,
+    PlayweftBridge: Bridge, Predictor, RemoteMotion, CollisionPlayback,
     document: { hidden: false, getElementById: id => elements.get(id), documentElement: { style: { setProperty() {} } } },
     window: { parent: {}, addEventListener() {} },
-    matchMedia: () => ({ matches: true }), performance: { now: () => 1000 },
+    matchMedia: () => ({ matches: true }), performance: { now: () => now },
     devicePixelRatio: 1, ResizeObserver: class { constructor(fn) { this.fn = fn; } observe() { this.fn(); } },
     setInterval(fn) { onPulse = fn; }, setTimeout() {}, requestAnimationFrame(fn) { onFrame = fn; },
   };
@@ -50,7 +51,7 @@ async function mount({ standalone = false, deferred = false } = {}) {
     event.detail = { state, serverTime: 60000 };
     bridge.dispatchEvent(event); onFrame(); return state;
   }
-  return { elements, bridge, actions, replies, snapshot, pulse: () => onPulse(), frame: () => onFrame() };
+  return { elements, bridge, actions, replies, snapshot, pulse: () => onPulse(), frame: (elapsed = 0) => { now += elapsed; onFrame(); } };
 }
 
 test('landscape UI handles play, pause, results and rematch without losing its controls', async () => {
@@ -150,4 +151,30 @@ test('heartbeats keep a bounded pipeline during delayed replies and reserve room
   assert.equal(ui.actions.length, 8, 'a freed pulse slot is used at the next cadence');
   for (const resolve of ui.replies) resolve({accepted:true});
   await Promise.all(pulses);
+});
+
+test('collision approach and hold finish before scores/results; duplicates cannot postpone them', async () => {
+  const ui = await mount();
+  const el = id => ui.elements.get(id);
+  const playing = ui.snapshot('playing');
+  const ended = structuredClone(playing);
+  ended.tick++; ended.reason = 'collision'; ended.winner = 2;
+  ended.players[1].score++;
+  Object.assign(ended.players[0], {crashed:true, impact:{tick:ended.tick,at:60120,fromX:17,fromY:8,x:18,y:8,kind:'trail',owner:2}});
+  ui.snapshot('ended', {...ended,phase:'ended'});
+  assert.equal(el('overlay').hidden, true);
+  assert.equal(el('replay').hidden, true);
+  assert.equal(el('score-2').textContent, '1');
+  assert.equal(el('up').disabled, true);
+  await el('replay').listeners.click();
+  assert.equal(ui.actions.length, 0, 'cannot rematch during impact presentation');
+  ui.frame(100);
+  ui.snapshot('ended', {...ended,phase:'ended'});
+  ui.frame(401);
+  assert.equal(el('overlay').hidden, false);
+  assert.equal(el('overlay-title').textContent, '失败');
+  assert.equal(el('score-2').textContent, '2');
+  assert.equal(el('replay').hidden, false);
+  ui.snapshot('countdown', {round:3});
+  assert.equal(el('overlay-title').textContent, '3');
 });

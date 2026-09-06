@@ -35,6 +35,7 @@ local function new_round(state, now)
     p.x, p.y, p.dir = i == 1 and 11 or 36, i == 1 and 12 or 14, i == 1 and 0 or 2
     p.turn, p.lastSeen, p.ready, p.rematch, p.crashed = 0, 0, false, false, false
     p.inputSeq, p.appliedSeq, p.inputs = 0, 0, {}
+    p.impact = nil
     p.trail = {}
     paint(state, p, i)
   end
@@ -58,15 +59,32 @@ local function step(state)
     p.dir = (p.dir + p.turn + 4) % 4
     p.turn = 0
     nexts[i] = { x = p.x + DX[p.dir + 1], y = p.y + DY[p.dir + 1] }
-    nexts[i].hit = occupied(state, nexts[i].x, nexts[i].y)
+    local n = nexts[i]
+    n.hit = occupied(state, n.x, n.y)
+    if n.hit then
+      local wall = n.x < 0 or n.y < 0 or n.x >= WIDTH or n.y >= HEIGHT
+      n.kind = wall and "wall" or "trail"
+      n.owner = wall and 0 or tonumber(string.sub(state.board[n.y + 1], n.x + 1, n.x + 1))
+    end
   end
   -- Evaluate both moves against the SAME board; neither seat has priority.
   if nexts[1].x == nexts[2].x and nexts[1].y == nexts[2].y then
     nexts[1].hit, nexts[2].hit = true, true
+    nexts[1].kind, nexts[2].kind = "head", "head"
+    nexts[1].owner, nexts[2].owner = 2, 1
+  elseif nexts[1].x == state.players[2].x and nexts[1].y == state.players[2].y
+    and nexts[2].x == state.players[1].x and nexts[2].y == state.players[1].y then
+    nexts[1].kind, nexts[2].kind = "head", "head"
+    nexts[1].owner, nexts[2].owner = 2, 1
   end
   state.tick = state.tick + 1
   for i, p in ipairs(state.players) do
     p.crashed = nexts[i].hit
+    if p.crashed then
+      local n = nexts[i]
+      p.impact = { tick = state.tick, at = state.lastStepAt, fromX = p.x, fromY = p.y,
+        x = n.x, y = n.y, kind = n.kind, owner = n.owner }
+    end
     if not p.crashed then
       p.x, p.y = nexts[i].x, nexts[i].y
       paint(state, p, i)
@@ -184,7 +202,7 @@ function view(state, events, context)
   local players = {}
   for i, p in ipairs(state.players) do
     players[i] = { id = p.id, name = p.name, score = p.score, x = p.x, y = p.y,
-      dir = p.dir, trail = p.trail, crashed = p.crashed, rematch = p.rematch,
+      dir = p.dir, trail = p.trail, crashed = p.crashed, impact = p.impact, rematch = p.rematch,
       turn = p.id == context.viewer.id and p.turn or 0,
       inputSeq = p.id == context.viewer.id and p.inputSeq or 0,
       appliedSeq = p.id == context.viewer.id and p.appliedSeq or 0,

@@ -3,12 +3,19 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
+import { Predictor } from '../games/light-trails/prediction.js';
+import { RemoteMotion } from '../games/light-trails/remote-motion.js';
+import { CollisionPlayback } from '../games/light-trails/collision-playback.js';
 
-test('two real WebSocket clients and a spectator complete, rematch, pause and reconnect', { timeout: 18000 }, async () => {
+for (const impaired of [false, true]) test(`two real WebSocket clients and a spectator complete, rematch, pause and reconnect${impaired ? ' with 160–360 ms RTT and jitter' : ''}`, { timeout: 26000 }, async () => {
   const child = spawn(process.execPath, ['scripts/dev.mjs'], { cwd: new URL('../', import.meta.url), env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
   let errors = '';
   child.stderr.on('data', (data) => { errors += data; });
-  const clients = [];
+  const clients = [], timers = new Set();
+  function later(fn, delay) {
+    const timer = setTimeout(() => { timers.delete(timer); fn(); }, delay);
+    timers.add(timer);
+  }
   try {
     const address = await new Promise((resolve, reject) => {
       child.once('error', reject);
@@ -27,21 +34,42 @@ test('two real WebSocket clients and a spectator complete, rematch, pause and re
     }
     function connect(seat) {
       const ws = new WebSocket(`${address.replace('http', 'ws')}/__dev/socket?seat=${seat}`);
-      const client = { ws, snapshot: null, nextId: 0, waiting: new Map() };
+      const client = { ws, snapshot: null, nextId: 0, waiting: new Map(),
+        predictor:new Predictor(), motion:new RemoteMotion(), ending:new CollisionPlayback(), rendered:[], arrivalAt:0, departureAt:0, packet:0 };
+      client.predictor.rtt = impaired ? 260 : 0;
       clients.push(client);
       ws.on('message', (data) => {
         const m = JSON.parse(String(data));
-        if (m.type === 'state') client.snapshot = m.params;
-        if (m.type === 'result') { client.waiting.get(m.id)?.(m); client.waiting.delete(m.id); }
+        const delay = impaired ? 80 + [0,100,30,70][client.packet++ % 4] : 0;
+        // TCP preserves order but can deliver several delayed messages in a burst.
+        client.arrivalAt = Math.max(client.arrivalAt, Date.now() + delay);
+        later(() => {
+          if (m.type === 'state') {
+            client.snapshot = m.params;
+            const now = performance.now(), state = m.params.state;
+            client.ending.receive(state,client.rendered,now);
+            client.predictor.receive(state,seat-1,m.params.serverTime,now);
+            client.motion.receive(state,now,client.predictor.now(now));
+          }
+          if (m.type === 'result') { client.waiting.get(m.id)?.(m); client.waiting.delete(m.id); }
+        }, client.arrivalAt - Date.now());
       });
       client.action = (type, extra = {}) => new Promise((resolve) => {
         const id = String(++client.nextId);
         client.waiting.set(id, resolve);
-        ws.send(JSON.stringify({ id, action: { type, round: client.snapshot.state.round, ...extra } }));
+        const message = JSON.stringify({ id, action: { type, round: client.snapshot.state.round, ...extra } });
+        client.departureAt = Math.max(client.departureAt, Date.now() + (impaired ? 80 + [0,100,30,70][client.nextId % 4] : 0));
+        later(() => { if (ws.readyState === 1) ws.send(message); }, client.departureAt - Date.now());
       });
       if (seat > 0) client.pulse = setInterval(() => {
-        if (ws.readyState === 1 && client.snapshot && !['ended', 'closed'].includes(client.snapshot.state.phase) && client.waiting.size < 2) void client.action('pulse');
+        if (ws.readyState === 1 && client.snapshot && !['ended', 'closed'].includes(client.snapshot.state.phase) && client.waiting.size < 3) void client.action('pulse');
       }, 100);
+      client.frames = setInterval(() => {
+        if (!client.snapshot) return;
+        const now = performance.now(), state = client.snapshot.state;
+        client.rendered = state.players.map((p,i) => client.ending.project(i,now) ||
+          (i === seat-1 ? client.predictor.project(now) : client.motion.project(i,now,client.predictor.now(now))) || p);
+      }, 10);
       return client;
     }
     async function until(predicate, limit = 9000) {
@@ -59,7 +87,11 @@ test('two real WebSocket clients and a spectator complete, rematch, pause and re
     await until(() => clients.every((c) => c.snapshot?.state.phase === 'ended'));
     assert.equal(blue.snapshot.state.winner, 2);
     assert.deepEqual(blue.snapshot.state.players.map((p) => p.trail), orange.snapshot.state.players.map((p) => p.trail));
-    assert.equal(viewer.snapshot.version, blue.snapshot.version);
+    await until(() => viewer.snapshot.version === blue.snapshot.version);
+    assert.deepEqual(blue.snapshot.state.players.map(p => p.impact),orange.snapshot.state.players.map(p => p.impact));
+    await until(() => clients.every(c => !c.ending.pending(performance.now())));
+    assert.ok(clients.every(c => c.rendered[0].crashed && c.rendered[0].impactPoint), 'each client displays confirmed impact before rematch');
+    assert.deepEqual(blue.rendered[0].head,orange.rendered[0].head);
     await blue.action('rematch');
     assert.equal(blue.snapshot.state.phase, 'ended');
     await orange.action('rematch');
@@ -70,9 +102,22 @@ test('two real WebSocket clients and a spectator complete, rematch, pause and re
     const rejoined = connect(2);
     await until(() => rejoined.snapshot?.state.phase === 'countdown' && blue.snapshot.state.phase === 'countdown');
     assert.equal(rejoined.snapshot.state.round, 2);
+    await until(() => blue.snapshot.state.phase === 'playing' && rejoined.snapshot.state.phase === 'playing');
+    // Exercise the actual prediction/input schedule during movement, not only a
+    // countdown turn. Both remote and local views must settle on the accepted move.
+    const inputs = [blue.predictor.enqueue(3,performance.now()),rejoined.predictor.enqueue(1,performance.now())];
+    assert.ok(inputs.every(Boolean));
+    const replies = await Promise.all([blue.action('steer',inputs[0]),rejoined.action('steer',inputs[1])]);
+    assert.ok(replies.every(r => r.result.accepted));
+    await until(() => blue.snapshot.state.players[0].appliedSeq === inputs[0].seq && rejoined.snapshot.state.players[1].appliedSeq === inputs[1].seq);
+    assert.equal(blue.snapshot.state.players[0].dir,3);
+    assert.equal(rejoined.snapshot.state.players[1].dir,1);
+    assert.equal(blue.predictor.pending.length,0);
+    assert.equal(rejoined.predictor.pending.length,0);
     assert.equal(errors, '');
   } finally {
-    for (const client of clients) { clearInterval(client.pulse); client.ws.terminate(); }
+    for (const timer of timers) clearTimeout(timer);
+    for (const client of clients) { clearInterval(client.pulse); clearInterval(client.frames); client.ws.terminate(); }
     const exited = once(child, 'exit'); child.kill(); await exited;
   }
 });
