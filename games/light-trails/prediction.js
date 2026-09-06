@@ -6,8 +6,16 @@ export class Predictor {
   seq = 0;
   rtt = 0;
   receivedAt = 0;
+  clockOffset = null;
+  clockTarget = 0;
+  clockAt = 0;
   receive(state, own, serverTime, now) {
     const reset = this.state?.round !== state.round || this.own !== own;
+    const restartClock = reset || this.state?.phase === 'paused' || this.state?.phase === 'waiting';
+    if (!restartClock && this.clockOffset !== null) this.now(now);
+    this.clockTarget = serverTime + Math.min(this.rtt / 2, 240) - now;
+    if (restartClock || this.clockOffset === null) this.clockOffset = this.clockTarget;
+    this.clockAt = now;
     this.state = state; this.own = own;
     this.receivedAt = now;
     this.serverTime = serverTime;
@@ -18,7 +26,15 @@ export class Predictor {
     this.pending = this.pending.filter(input => input.seq > acknowledged);
     if (!['playing', 'countdown'].includes(state.phase)) this.pending = [];
   }
-  now(time) { return this.serverTime + Math.min(this.rtt / 2, 240) + time - this.receivedAt; }
+  now(time) {
+    // Slew clock corrections rather than resetting animation phase on each packet.
+    // At most 10% speed adjustment, so even a delayed snapshot cannot rewind time.
+    const elapsed = Math.max(0, time - this.clockAt);
+    const adjustment = Math.max(-elapsed * .1, Math.min(elapsed * .1, this.clockTarget - this.clockOffset));
+    this.clockOffset += adjustment;
+    this.clockAt = Math.max(this.clockAt, time);
+    return time + this.clockOffset;
+  }
   inputs() {
     const player = this.state?.players[this.own];
     const confirmed = Array.isArray(player?.inputs) ? player.inputs : [];
@@ -36,8 +52,13 @@ export class Predictor {
     const last = inputs.at(-1);
     const direction = last?.heading ?? player.dir;
     if (heading === direction || (heading - direction + 4) % 4 === 2) return null;
-    const estimate = state.tick + Math.max(0, Math.floor((this.now(time) - state.lastStepAt) / state.stepMs));
-    const tick = Math.max(state.tick + 1, (last?.tick || 0) + 1, Math.min(estimate + 1, state.tick + 6));
+    const serverNow = this.now(time);
+    // A segment already visible on screen must finish before a new turn can begin.
+    const started = Math.max(0, Math.ceil((serverNow - state.lastStepAt) / state.stepMs - 1e-7));
+    // Leave enough time for the request to reach the server, reducing late rescheduling.
+    const arrival = serverNow + Math.min(this.rtt / 2, 240) + 16;
+    const arrivalStep = Math.max(0, Math.floor((arrival - state.lastStepAt) / state.stepMs));
+    const tick = Math.max(state.tick + 1, (last?.tick || 0) + 1, state.tick + started + 1, state.tick + arrivalStep + 1);
     if (tick > state.tick + 6) return null;
     const input = { seq: ++this.seq, tick, heading };
     this.pending.push(input);
@@ -47,8 +68,9 @@ export class Predictor {
   project(time) {
     const state = this.state, player = state?.players[this.own];
     if (!player || state.phase !== 'playing') return null;
-    // At most two cells beyond the latest authoritative state; never extrapolate an outage.
-    const ahead = Math.max(0, Math.min(2, (this.now(time) - state.lastStepAt) / state.stepMs));
+    // Short, latency-aware horizon avoids repeatedly hitting a two-cell stop on slower links.
+    const horizon = Math.min(4, Math.max(2, Math.ceil(this.rtt / state.stepMs) + 1));
+    const ahead = Math.max(0, Math.min(horizon, (this.now(time) - state.lastStepAt) / state.stepMs));
     const occupied = new Set(state.players.flatMap(p => p.trail));
     const trail = [...player.trail], inputs = this.inputs();
     let { x, y, dir } = player;

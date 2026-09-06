@@ -78,3 +78,55 @@ test('Lua sequences rapid absolute turns, acknowledges receipt/execution, and hi
     assert.equal(s.players[0].appliedSeq, s.players[0].inputSeq);
   } finally { runtime.close(); }
 });
+
+test('a mid-cell turn preserves the moving segment and traverses the corner continuously', () => {
+  const p = new Predictor(), s = snapshot();
+  p.receive(s, 0, 1000, 0);
+  const before = p.project(60).head;
+  const input = p.enqueue(3, 60);
+  assert.equal(input.tick, 12, 'the half-rendered tick 11 must not be rewritten');
+  assert.deepEqual(p.project(60).head, before, 'input must not teleport the head');
+  const near = p.project(119.99).head;
+  const corner = p.project(120).head;
+  const after = p.project(120.01).head;
+  assert.deepEqual(corner, {x:11.5, y:10.5});
+  assert.ok(Math.hypot(near.x - corner.x, near.y - corner.y) < .001);
+  assert.ok(Math.hypot(after.x - corner.x, after.y - corner.y) < .001);
+  assert.ok(after.y < corner.y);
+});
+
+test('jittered snapshots and latency changes slew the animation clock without rewinding it', () => {
+  const p = new Predictor(), s = snapshot();
+  p.receive(s, 0, 1000, 0);
+  const before = p.project(90).head;
+  p.receive(s, 0, 1000, 90); // Delayed duplicate-step snapshot.
+  assert.deepEqual(p.project(90).head, before);
+  let previous = p.now(90);
+  for (let time = 100; time <= 190; time += 10) {
+    const now = p.now(time);
+    assert.ok(now - previous >= 8.99 && now - previous <= 11.01);
+    previous = now;
+  }
+  p.rtt = 200;
+  const atReceipt = p.now(200);
+  p.receive(s, 0, 1200, 200);
+  assert.equal(p.now(200), atReceipt, 'RTT update must not jump the presentation clock');
+});
+
+test('acknowledgement and executed-turn snapshots preserve an already correct prediction', () => {
+  const p = new Predictor(), s = snapshot();
+  p.receive(s, 0, 1000, 0);
+  const input = p.enqueue(3, 60);
+  const before = p.project(100).head;
+  const ack = structuredClone(s);
+  ack.players[0].inputSeq = input.seq;
+  ack.players[0].inputs = [input];
+  p.receive(ack, 0, 1100, 100);
+  assert.deepEqual(p.project(100).head, before);
+  const turned = p.project(240).head;
+  const next = structuredClone(ack);
+  next.tick = 12; next.lastStepAt = 1240;
+  Object.assign(next.players[0], {x:11, y:9, dir:3, inputs:[], trail:[491,492,444]});
+  p.receive(next, 0, 1240, 240);
+  assert.deepEqual(p.project(240).head, turned);
+});

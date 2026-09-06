@@ -9,12 +9,12 @@ const predictor = new Predictor();
 let outbound = [], inFlight = 0, generation = 0, currentMatch;
 const colors = ['#78e9e4', '#ff9b7e'];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-let state = null, ownIndex = -1, lastReceived = 0, serverAtReceipt = 0;
+let state = null, ownIndex = -1, lastReceived = 0;
 let pulsePending = false, rematchPending = false;
 let boardPixels = 0, boardHeight = 0;
 const setText = (id, value) => { if ($(id).textContent !== value) $(id).textContent = value; };
 
-function serverNow() { return serverAtReceipt + performance.now() - lastReceived; }
+function serverNow() { return predictor.now(performance.now()); }
 function fresh() { return state && performance.now() - lastReceived < 1800; }
 function canTurn() { return fresh() && ownIndex >= 0 && ['playing', 'countdown'].includes(state.phase); }
 
@@ -35,7 +35,6 @@ bridge.addEventListener('state', ({ detail }) => {
   $('launch').hidden = $('help').hidden = true;
   if (state.phase !== 'ended') setText('hint', '');
   lastReceived = performance.now();
-  serverAtReceipt = detail.serverTime;
   ownIndex = state.players.findIndex((p) => p.id === bridge.context?.playerId);
   predictor.receive(state, ownIndex, detail.serverTime, performance.now());
   if (!['playing', 'countdown'].includes(state.phase)) outbound = [];
@@ -167,20 +166,29 @@ function renderBoard() {
     ctx.globalAlpha = 1;
     return;
   }
-  const progress = !reducedMotion && state.phase === 'playing'
-    ? Math.max(0, Math.min(1, (serverNow() - state.lastStepAt) / state.stepMs)) : 1;
+  const renderTime = serverNow();
   const point = (cell) => ({ x: ((cell - 1) % width + .5) * unit, y: (Math.floor((cell - 1) / width) + .5) * unit });
   const projected = fresh() && !document.hidden ? predictor.project(performance.now()) : null;
   state.players.forEach((authoritative, index) => {
-    const player = index === ownIndex && projected ? projected : authoritative;
-    const points = player.trail.map(point);
+    const player = index === ownIndex && projected ? projected : { ...authoritative };
+    let points = player.trail.map(point);
     let head = points.at(-1);
     if (!head) return;
     if (player.head) {
       head = { x: player.head.x * unit, y: player.head.y * unit };
-    } else if (points.length > 1) {
-      const previous = points.at(-2);
-      head = { x: previous.x + (head.x - previous.x) * progress, y: previous.y + (head.y - previous.y) * progress };
+    } else if (points.length > 1 && !reducedMotion && state.phase === 'playing') {
+      // Sample the entire confirmed path, not only the last segment: a packet may
+      // contain multiple steps. Traverse each corner instead of jumping across it.
+      const delay = Math.max(state.stepMs, Math.min(240, predictor.rtt / 2 + 60));
+      const behind = Math.max(0, (state.lastStepAt - (renderTime - delay)) / state.stepMs);
+      const distance = Math.max(0, points.length - 1 - behind);
+      const start = Math.floor(distance), fraction = distance - start;
+      const a = points[start], b = points[Math.min(start + 1, points.length - 1)];
+      head = { x: a.x + (b.x - a.x) * fraction, y: a.y + (b.y - a.y) * fraction };
+      if (a.x !== b.x || a.y !== b.y) {
+        player.dir = b.x > a.x ? 0 : b.y > a.y ? 1 : b.x < a.x ? 2 : 3;
+      }
+      points = [...points.slice(0, start + 1), head];
     }
     ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
     ctx.lineWidth = unit * .7;
