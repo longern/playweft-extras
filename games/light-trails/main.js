@@ -1,16 +1,17 @@
 import { PlayweftBridge } from '../../src/playweft-client.js';
 import { Predictor } from './prediction.js';
+import { RemoteMotion } from './remote-motion.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
 const ctx = canvas.getContext('2d');
 const bridge = new PlayweftBridge();
 const predictor = new Predictor();
+const remoteMotion = new RemoteMotion();
 let outbound = [], inFlight = 0, generation = 0, currentMatch;
 const colors = ['#78e9e4', '#ff9b7e'];
-const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let state = null, ownIndex = -1, lastReceived = 0;
-let pulsePending = false, rematchPending = false;
+let pulsesInFlight = 0, rematchPending = false;
 let boardPixels = 0, boardHeight = 0;
 const setText = (id, value) => { if ($(id).textContent !== value) $(id).textContent = value; };
 
@@ -26,7 +27,7 @@ bridge.addEventListener('initialize', ({ detail }) => {
 });
 bridge.addEventListener('state', ({ detail }) => {
   if (state?.round !== detail.state.round || detail.matchId !== currentMatch) {
-    outbound = []; generation++; predictor.state = null; predictor.pending = [];
+    outbound = []; generation++; predictor.state = null; predictor.pending = []; remoteMotion.reset();
   }
   currentMatch = detail.matchId;
   state = detail.state;
@@ -36,7 +37,9 @@ bridge.addEventListener('state', ({ detail }) => {
   if (state.phase !== 'ended') setText('hint', '');
   lastReceived = performance.now();
   ownIndex = state.players.findIndex((p) => p.id === bridge.context?.playerId);
-  predictor.receive(state, ownIndex, detail.serverTime, performance.now());
+  const receivedAt = performance.now();
+  predictor.receive(state, ownIndex, detail.serverTime, receivedAt);
+  remoteMotion.receive(state, receivedAt, predictor.now(receivedAt));
   if (!['playing', 'countdown'].includes(state.phase)) outbound = [];
   document.documentElement.style.setProperty('--accent', colors[Math.max(0, ownIndex)]);
   state.players.forEach((p, i) => {
@@ -68,16 +71,17 @@ async function action(type, extra = {}) {
 }
 
 // Both players send pulses; the server clock determines progress, never pulse count.
-// One outstanding pulse bounds backpressure. Hidden tabs stop; the other side pauses.
+// Up to three outstanding pulses preserve cadence over a moderate RTT without
+// an unbounded backlog. Hidden tabs stop; the other side pauses.
 setInterval(async () => {
-  if (!state || ownIndex < 0 || document.hidden || pulsePending || ['ended', 'closed'].includes(state.phase)) return;
-  pulsePending = true;
+  if (!state || ownIndex < 0 || document.hidden || pulsesInFlight >= 3 || ['ended', 'closed'].includes(state.phase)) return;
+  pulsesInFlight++;
   try { await action('pulse'); } catch { /* The freshness indicator handles outages. */ }
-  finally { pulsePending = false; }
+  finally { pulsesInFlight--; }
 }, 100);
 
 function sendInputs() {
-  // Four concurrent turns plus one pulse stay below the bridge's eight-request limit.
+  // Four turns plus three pulses leave one slot in the eight-request bridge budget.
   while (outbound.length && inFlight < 4) {
     const input = outbound.shift();
     if (input.generation !== generation) continue;
@@ -166,29 +170,18 @@ function renderBoard() {
     ctx.globalAlpha = 1;
     return;
   }
-  const renderTime = serverNow();
+  const frameAt = performance.now();
+  const renderTime = predictor.now(frameAt);
   const point = (cell) => ({ x: ((cell - 1) % width + .5) * unit, y: (Math.floor((cell - 1) / width) + .5) * unit });
   const projected = fresh() && !document.hidden ? predictor.project(performance.now()) : null;
   state.players.forEach((authoritative, index) => {
-    const player = index === ownIndex && projected ? projected : { ...authoritative };
-    let points = player.trail.map(point);
+    const remote = fresh() && !document.hidden && index !== ownIndex ? remoteMotion.project(index, frameAt, renderTime) : null;
+    const player = index === ownIndex && projected ? projected : remote || { ...authoritative };
+    const points = player.trail.map(point);
     let head = points.at(-1);
     if (!head) return;
     if (player.head) {
       head = { x: player.head.x * unit, y: player.head.y * unit };
-    } else if (points.length > 1 && !reducedMotion && state.phase === 'playing') {
-      // Sample the entire confirmed path, not only the last segment: a packet may
-      // contain multiple steps. Traverse each corner instead of jumping across it.
-      const delay = Math.max(state.stepMs, Math.min(240, predictor.rtt / 2 + 60));
-      const behind = Math.max(0, (state.lastStepAt - (renderTime - delay)) / state.stepMs);
-      const distance = Math.max(0, points.length - 1 - behind);
-      const start = Math.floor(distance), fraction = distance - start;
-      const a = points[start], b = points[Math.min(start + 1, points.length - 1)];
-      head = { x: a.x + (b.x - a.x) * fraction, y: a.y + (b.y - a.y) * fraction };
-      if (a.x !== b.x || a.y !== b.y) {
-        player.dir = b.x > a.x ? 0 : b.y > a.y ? 1 : b.x < a.x ? 2 : 3;
-      }
-      points = [...points.slice(0, start + 1), head];
     }
     ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
     ctx.lineWidth = unit * .7;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "id": "/light-trails/",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "protocol": {
     "min": 1,
     "max": 1

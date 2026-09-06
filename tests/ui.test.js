@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { Predictor } from '../games/light-trails/prediction.js';
+import { RemoteMotion } from '../games/light-trails/remote-motion.js';
 
 // Exercise the shipped client with room snapshots, without a browser or a network.
 // Missing HTML IDs and broken render/input paths fail just as they do in the page.
@@ -16,7 +17,7 @@ async function mount({ standalone = false, deferred = false } = {}) {
       listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; },
     }];
   }));
-  let onFrame, bridge;
+  let onFrame, bridge, onPulse;
   const actions = [], replies = [];
   class Bridge extends EventTarget {
     context = { playerId: 'blue' };
@@ -27,12 +28,12 @@ async function mount({ standalone = false, deferred = false } = {}) {
   canvas.getBoundingClientRect = () => ({ width: 480, height: 270 });
   canvas.getContext = () => new Proxy({}, { get: (target, prop) => target[prop] ?? (() => {}) });
   const scope = {
-    PlayweftBridge: Bridge, Predictor,
+    PlayweftBridge: Bridge, Predictor, RemoteMotion,
     document: { hidden: false, getElementById: id => elements.get(id), documentElement: { style: { setProperty() {} } } },
     window: { parent: {}, addEventListener() {} },
     matchMedia: () => ({ matches: true }), performance: { now: () => 1000 },
     devicePixelRatio: 1, ResizeObserver: class { constructor(fn) { this.fn = fn; } observe() { this.fn(); } },
-    setInterval() {}, setTimeout() {}, requestAnimationFrame(fn) { onFrame = fn; },
+    setInterval(fn) { onPulse = fn; }, setTimeout() {}, requestAnimationFrame(fn) { onFrame = fn; },
   };
   if (standalone) scope.window.parent = scope.window;
   scope.URL = URL;
@@ -49,7 +50,7 @@ async function mount({ standalone = false, deferred = false } = {}) {
     event.detail = { state, serverTime: 60000 };
     bridge.dispatchEvent(event); onFrame(); return state;
   }
-  return { elements, bridge, actions, replies, snapshot, frame: () => onFrame() };
+  return { elements, bridge, actions, replies, snapshot, pulse: () => onPulse(), frame: () => onFrame() };
 }
 
 test('landscape UI handles play, pause, results and rematch without losing its controls', async () => {
@@ -129,4 +130,24 @@ test('D-pad accepts consecutive turns without waiting for network replies, with 
   ui.elements.get('down').listeners.pointerdown({ button: 0, preventDefault() {} });
   assert.equal(ui.actions.length, 5);
   for (const resolve of ui.replies) resolve({ accepted: true });
+});
+
+
+test('heartbeats keep a bounded pipeline during delayed replies and reserve room for steering', async () => {
+  const ui = await mount({deferred:true});
+  ui.snapshot('playing');
+  const pulses = Array.from({length:8}, () => ui.pulse());
+  assert.equal(ui.actions.length, 3);
+  assert.ok(ui.actions.every(a => a.type === 'pulse'));
+  for (const id of ['up', 'left', 'down', 'right']) {
+    ui.elements.get(id).listeners.pointerdown({button:0,preventDefault() {}});
+  }
+  assert.equal(ui.actions.length, 7);
+  assert.equal(ui.actions.filter(a => a.type === 'steer').length, 4);
+  ui.replies[0]({accepted:true});
+  await new Promise(resolve => setImmediate(resolve));
+  pulses.push(ui.pulse());
+  assert.equal(ui.actions.length, 8, 'a freed pulse slot is used at the next cadence');
+  for (const resolve of ui.replies) resolve({accepted:true});
+  await Promise.all(pulses);
 });
