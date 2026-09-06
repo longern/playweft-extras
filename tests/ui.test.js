@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { Predictor } from '../games/light-trails/prediction.js';
 
 // Exercise the shipped client with room snapshots, without a browser or a network.
 // Missing HTML IDs and broken render/input paths fail just as they do in the page.
-async function mount({ standalone = false } = {}) {
+async function mount({ standalone = false, deferred = false } = {}) {
   const html = await readFile(new URL('../games/light-trails/index.html', import.meta.url), 'utf8');
   const elements = new Map([...html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)].map(([tag, id]) => {
     const classes = new Set();
@@ -16,17 +17,17 @@ async function mount({ standalone = false } = {}) {
     }];
   }));
   let onFrame, bridge;
-  const actions = [];
+  const actions = [], replies = [];
   class Bridge extends EventTarget {
     context = { playerId: 'blue' };
     constructor() { super(); bridge = this; }
-    async action(action) { actions.push(action); return { accepted: true }; }
+    async action(action) { actions.push(action); if (deferred) return new Promise(resolve => replies.push(resolve)); return { accepted: true }; }
   }
   const canvas = elements.get('board');
   canvas.getBoundingClientRect = () => ({ width: 480, height: 270 });
   canvas.getContext = () => new Proxy({}, { get: (target, prop) => target[prop] ?? (() => {}) });
   const scope = {
-    PlayweftBridge: Bridge,
+    PlayweftBridge: Bridge, Predictor,
     document: { hidden: false, getElementById: id => elements.get(id), documentElement: { style: { setProperty() {} } } },
     window: { parent: {}, addEventListener() {} },
     matchMedia: () => ({ matches: true }), performance: { now: () => 1000 },
@@ -36,19 +37,19 @@ async function mount({ standalone = false } = {}) {
   if (standalone) scope.window.parent = scope.window;
   scope.URL = URL;
   scope.location = { href: 'https://games.example/light-trails/' };
-  const script = (await readFile(new URL('../games/light-trails/main.js', import.meta.url), 'utf8')).replace(/^import[^\n]+\n/, '');
+  const script = (await readFile(new URL('../games/light-trails/main.js', import.meta.url), 'utf8')).replace(/^import[^\n]+\n/gm, '');
   vm.runInNewContext(script, scope);
   function snapshot(phase, extra = {}) {
     const state = { width: 48, height: 27, stepMs: 120, tick: 500, lastStepAt: 60000, startsAt: 63000, round: 2, phase,
       players: [
-        { id: 'blue', name: '蓝方', score: 2, dir: 0, trail: [401, 402], rematch: false },
-        { id: 'orange', name: '橙方', score: 1, dir: 2, trail: [800, 799], rematch: false },
+        { id: 'blue', name: '蓝方', score: 2, x: 16, y: 8, dir: 0, trail: [401, 402], rematch: false },
+        { id: 'orange', name: '橙方', score: 1, x: 31, y: 16, dir: 2, trail: [800, 799], rematch: false },
       ], ...extra };
     const event = new Event('state');
     event.detail = { state, serverTime: 60000 };
     bridge.dispatchEvent(event); onFrame(); return state;
   }
-  return { elements, bridge, actions, snapshot, frame: () => onFrame() };
+  return { elements, bridge, actions, replies, snapshot, frame: () => onFrame() };
 }
 
 test('landscape UI handles play, pause, results and rematch without losing its controls', async () => {
@@ -59,8 +60,8 @@ test('landscape UI handles play, pause, results and rematch without losing its c
   assert.equal(el('left').disabled, false);
   assert.equal(el('player-1').classList.contains('is-you'), true);
   assert.equal(el('elapsed').textContent, '01:00');
-  await el('left').listeners.pointerdown({ button: 0, preventDefault() {} });
-  assert.equal(ui.actions.at(-1).direction, -1);
+  await el('up').listeners.pointerdown({ button: 0, preventDefault() {} });
+  assert.equal(ui.actions.at(-1).heading, 3);
   ui.snapshot('paused');
   assert.equal(el('overlay').hidden, false);
   assert.equal(el('left').disabled, true);
@@ -109,4 +110,23 @@ test('standalone title screen shows a launch menu without inactive match control
   assert.equal(el('match-hud').hidden, false);
   assert.equal(el('launch').hidden, true);
   assert.equal(el('help').hidden, true);
+});
+
+
+test('D-pad accepts consecutive turns without waiting for network replies, with bounded concurrency', async () => {
+  const ui = await mount({ deferred: true });
+  ui.snapshot('playing');
+  for (const id of ['up', 'left', 'down', 'right', 'up']) {
+    ui.elements.get(id).listeners.pointerdown({ button: 0, preventDefault() {} });
+  }
+  assert.deepEqual(ui.actions.map(a => a.heading), [3, 2, 1, 0]);
+  assert.deepEqual(ui.actions.map(a => a.seq), [1, 2, 3, 4]);
+  ui.replies[0]({ accepted: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ui.actions.length, 5);
+  assert.equal(ui.actions[4].heading, 3);
+  ui.snapshot('paused');
+  ui.elements.get('down').listeners.pointerdown({ button: 0, preventDefault() {} });
+  assert.equal(ui.actions.length, 5);
+  for (const resolve of ui.replies) resolve({ accepted: true });
 });

@@ -36,12 +36,15 @@
       <div class="arena-meta"><span id="round">第 1 局</span><span id="elapsed">00:00</span></div>
       <section class="player coral" id="player-2" aria-label="橙方比分"><strong id="score-2">0</strong><span class="player-role" id="role-2">02</span><span class="player-name" id="name-2">橙方</span><span class="player-dot"></span></section>
     </div>
-    <div class="controls" id="controls" hidden>
-      <button id="left" class="turn turn-left" aria-label="向左转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M25 25v-9a7 7 0 0 0-7-7H6m0 0 6-6M6 9l6 6"/></svg><span>左转</span><kbd>← / A</kbd></button>
-      <button id="right" class="turn turn-right" aria-label="向右转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 25v-9a7 7 0 0 1 7-7h12m0 0-6-6m6 6-6 6"/></svg><span>右转</span><kbd>→ / D</kbd></button>
-    </div>
     <footer class="bottom"><p id="hint" role="status" aria-live="polite"></p><span class="spectator" id="spectator" hidden>观战</span><span class="rotate-hint">建议横屏游玩</span></footer>
   </main>
+  <div class="controls" id="controls" role="group" aria-label="方向键" hidden>
+    <button id="up" class="direction direction-up" aria-label="向上" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 6-6 6 6"/></svg></button>
+    <button id="left" class="direction direction-left" aria-label="向左" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 6-6 6 6 6"/></svg></button>
+    <span class="dpad-center" aria-hidden="true"></span>
+    <button id="right" class="direction direction-right" aria-label="向右" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6"/></svg></button>
+    <button id="down" class="direction direction-down" aria-label="向下" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 10 6 6 6-6"/></svg></button>
+  </div>
   </div>
 </body>
 </html>

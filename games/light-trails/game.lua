@@ -34,6 +34,7 @@ local function new_round(state, now)
   for i, p in ipairs(state.players) do
     p.x, p.y, p.dir = i == 1 and 11 or 36, i == 1 and 12 or 14, i == 1 and 0 or 2
     p.turn, p.lastSeen, p.ready, p.rematch, p.crashed = 0, 0, false, false, false
+    p.inputSeq, p.appliedSeq, p.inputs = 0, 0, {}
     p.trail = {}
     paint(state, p, i)
   end
@@ -47,6 +48,13 @@ end
 local function step(state)
   local nexts = {}
   for i, p in ipairs(state.players) do
+    local input = p.inputs and p.inputs[1]
+    if input and input.tick <= state.tick + 1 then
+      table.remove(p.inputs, 1)
+      if (input.heading - p.dir + 4) % 4 ~= 2 then p.dir = input.heading end
+      p.appliedSeq = input.seq
+      p.turn = 0
+    end
     p.dir = (p.dir + p.turn + 4) % 4
     p.turn = 0
     nexts[i] = { x = p.x + DX[p.dir + 1], y = p.y + DY[p.dir + 1] }
@@ -84,7 +92,7 @@ local function advance(state, now)
   if not both_present(state, now) then
     if state.phase ~= "waiting" then
       state.phase, state.reason = "paused", "connection"
-      for _, p in ipairs(state.players) do p.turn = 0 end
+      for _, p in ipairs(state.players) do p.turn, p.inputs = 0, {}; p.appliedSeq = p.inputSeq end
     end
     return
   end
@@ -100,7 +108,7 @@ local function advance(state, now)
   -- A stalled room resumes with a countdown instead of replaying a lethal burst.
   if now - state.lastStepAt > STEP_MS * 8 then
     state.phase, state.startsAt, state.lastStepAt = "countdown", now + COUNTDOWN_MS, now + COUNTDOWN_MS
-    for _, p in ipairs(state.players) do p.turn = 0 end
+    for _, p in ipairs(state.players) do p.turn, p.inputs = 0, {}; p.appliedSeq = p.inputSeq end
     return
   end
   local count = 0
@@ -127,12 +135,20 @@ function on_action(state, action, context)
   if index == 0 or context.actor.role == "spectator" then
     return reject("SPECTATOR", "Spectators cannot control the game")
   end
-  if type(action) ~= "table" or (action.type ~= "pulse" and action.type ~= "turn" and action.type ~= "rematch") then
+  if type(action) ~= "table" or (action.type ~= "pulse" and action.type ~= "turn" and action.type ~= "steer" and action.type ~= "rematch") then
     return reject("INVALID_ACTION", "Expected pulse, turn or rematch")
   end
   if action.round ~= state.round then return reject("STALE_ROUND", "This round has already ended") end
   if action.type == "turn" and action.direction ~= -1 and action.direction ~= 1 then
     return reject("INVALID_TURN", "Direction must be -1 or 1")
+  end
+  if action.type == "steer" then
+    if type(action.heading) ~= "number" or action.heading % 1 ~= 0 or action.heading < 0 or action.heading > 3
+      or type(action.seq) ~= "number" or action.seq % 1 ~= 0 or action.seq < 1 or action.seq > 1000000000
+      or type(action.tick) ~= "number" or action.tick % 1 ~= 0 or action.tick < 1 or action.tick > 1000000000 then
+      return reject("INVALID_INPUT", "Expected a heading, sequence and target tick")
+    end
+    if state.phase ~= "playing" and state.phase ~= "countdown" then return reject("NOT_ACTIVE", "Inputs require an active round") end
   end
   if state.phase == "closed" then return reject("PLAYER_LEFT", "Return to the room to find another player") end
   if action.type == "rematch" and state.phase ~= "ended" then
@@ -144,7 +160,17 @@ function on_action(state, action, context)
   advance(state, now)
   player.lastSeen, player.ready = now, true
   advance(state, now)
-  if action.type == "turn" and (state.phase == "playing" or state.phase == "countdown") then
+  if action.type == "steer" then
+    if state.phase ~= "playing" and state.phase ~= "countdown" then return reject("NOT_ACTIVE", "Round is no longer active") end
+    if action.seq <= player.inputSeq then return accept(state) end
+    if #player.inputs >= 6 then return reject("INPUT_QUEUE_FULL", "At most six queued inputs") end
+    local previous = player.inputs[#player.inputs]
+    local earliest = math.max(state.tick + 1, previous and previous.tick + 1 or 0)
+    local target = math.max(earliest, math.min(action.tick, state.tick + 6))
+    if target > state.tick + 6 then return reject("INPUT_QUEUE_FULL", "Input window is full") end
+    player.inputSeq = action.seq
+    table.insert(player.inputs, { seq = action.seq, tick = target, heading = action.heading })
+  elseif action.type == "turn" and (state.phase == "playing" or state.phase == "countdown") then
     -- One queued quarter-turn per simulation step. Repeated taps cannot reverse.
     if player.turn == 0 then player.turn = action.direction end
   elseif action.type == "rematch" then
@@ -159,7 +185,10 @@ function view(state, events, context)
   for i, p in ipairs(state.players) do
     players[i] = { id = p.id, name = p.name, score = p.score, x = p.x, y = p.y,
       dir = p.dir, trail = p.trail, crashed = p.crashed, rematch = p.rematch,
-      turn = p.id == context.viewer.id and p.turn or 0 }
+      turn = p.id == context.viewer.id and p.turn or 0,
+      inputSeq = p.id == context.viewer.id and p.inputSeq or 0,
+      appliedSeq = p.id == context.viewer.id and p.appliedSeq or 0,
+      inputs = p.id == context.viewer.id and p.inputs or {} }
   end
   return { state = { width = state.width, height = state.height, stepMs = state.stepMs, round = state.round,
     phase = state.phase, reason = state.reason, winner = state.winner, tick = state.tick,

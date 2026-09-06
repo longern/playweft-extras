@@ -1,13 +1,16 @@
 import { PlayweftBridge } from '../../src/playweft-client.js';
+import { Predictor } from './prediction.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
 const ctx = canvas.getContext('2d');
 const bridge = new PlayweftBridge();
+const predictor = new Predictor();
+let outbound = [], inFlight = 0, generation = 0, currentMatch;
 const colors = ['#78e9e4', '#ff9b7e'];
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 let state = null, ownIndex = -1, lastReceived = 0, serverAtReceipt = 0;
-let pulsePending = false, turnPending = false, rematchPending = false;
+let pulsePending = false, rematchPending = false;
 let boardPixels = 0, boardHeight = 0;
 const setText = (id, value) => { if ($(id).textContent !== value) $(id).textContent = value; };
 
@@ -22,6 +25,10 @@ bridge.addEventListener('initialize', ({ detail }) => {
   }
 });
 bridge.addEventListener('state', ({ detail }) => {
+  if (state?.round !== detail.state.round || detail.matchId !== currentMatch) {
+    outbound = []; generation++; predictor.state = null; predictor.pending = [];
+  }
+  currentMatch = detail.matchId;
   state = detail.state;
   $('game').classList.remove('title-screen');
   $('match-hud').hidden = false;
@@ -30,6 +37,8 @@ bridge.addEventListener('state', ({ detail }) => {
   lastReceived = performance.now();
   serverAtReceipt = detail.serverTime;
   ownIndex = state.players.findIndex((p) => p.id === bridge.context?.playerId);
+  predictor.receive(state, ownIndex, detail.serverTime, performance.now());
+  if (!['playing', 'countdown'].includes(state.phase)) outbound = [];
   document.documentElement.style.setProperty('--accent', colors[Math.max(0, ownIndex)]);
   state.players.forEach((p, i) => {
     $(`player-${i + 1}`).classList.toggle('is-you', i === ownIndex);
@@ -41,6 +50,9 @@ bridge.addEventListener('state', ({ detail }) => {
   setText('round', `第 ${state.round} 局`);
   $('controls').hidden = ownIndex < 0;
   $('spectator').hidden = ownIndex >= 0;
+});
+bridge.addEventListener('latency', ({ detail }) => {
+  if (Number.isFinite(detail.rttMs) && detail.rttMs >= 0) predictor.rtt = Math.min(detail.rttMs, 1000);
 });
 bridge.addEventListener('error', () => {
   setText('connection', '连接中断');
@@ -65,32 +77,43 @@ setInterval(async () => {
   finally { pulsePending = false; }
 }, 100);
 
-async function turn(direction) {
-  if (!canTurn() || turnPending) return;
-  const button = $(direction < 0 ? 'left' : 'right');
-  button.classList.add('flash');
-  setTimeout(() => button.classList.remove('flash'), 120);
-  turnPending = true;
-  try { await action('turn', { direction }); } catch { /* Keep input recoverable. */ }
-  finally { turnPending = false; }
+function sendInputs() {
+  // Four concurrent turns plus one pulse stay below the bridge's eight-request limit.
+  while (outbound.length && inFlight < 4) {
+    const input = outbound.shift();
+    if (input.generation !== generation) continue;
+    if (input.round !== state?.round || !canTurn()) { predictor.reject(input.seq); continue; }
+    inFlight++;
+    void action('steer', input).catch(() => {
+      if (input.generation === generation) predictor.reject(input.seq);
+    }).finally(() => { inFlight--; sendInputs(); });
+  }
 }
 
-for (const [id, direction] of [['left', -1], ['right', 1]]) {
+function steer(heading) {
+  if (!canTurn()) return;
+  const input = predictor.enqueue(heading, performance.now());
+  if (!input) return;
+  const button = $(['right', 'down', 'left', 'up'][heading]);
+  button.classList.add('flash');
+  setTimeout(() => button.classList.remove('flash'), 120);
+  outbound.push({ ...input, round: state.round, generation });
+  sendInputs();
+}
+
+for (const [id, heading] of [['up', 3], ['down', 1], ['left', 2], ['right', 0]]) {
   $(id).addEventListener('pointerdown', (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
-    void turn(direction);
+    steer(heading);
   });
-  // Keyboard and assistive-technology activation generates a click with detail=0.
-  $(id).addEventListener('click', (event) => { if (event.detail === 0) void turn(direction); });
+  $(id).addEventListener('click', (event) => { if (event.detail === 0) steer(heading); });
 }
 window.addEventListener('keydown', (event) => {
   if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
-  const key = event.key.toLowerCase();
-  if (['arrowleft', 'a', 'arrowright', 'd'].includes(key)) {
-    event.preventDefault();
-    void turn(key === 'arrowleft' || key === 'a' ? -1 : 1);
-  }
+  const headings = { arrowup: 3, w: 3, arrowdown: 1, s: 1, arrowleft: 2, a: 2, arrowright: 0, d: 0 };
+  const heading = headings[event.key.toLowerCase()];
+  if (heading !== undefined) { event.preventDefault(); steer(heading); }
 });
 $('replay').addEventListener('click', async () => {
   if (rematchPending || ownIndex < 0 || state?.phase !== 'ended') return;
@@ -147,11 +170,15 @@ function renderBoard() {
   const progress = !reducedMotion && state.phase === 'playing'
     ? Math.max(0, Math.min(1, (serverNow() - state.lastStepAt) / state.stepMs)) : 1;
   const point = (cell) => ({ x: ((cell - 1) % width + .5) * unit, y: (Math.floor((cell - 1) / width) + .5) * unit });
-  state.players.forEach((player, index) => {
+  const projected = fresh() && !document.hidden ? predictor.project(performance.now()) : null;
+  state.players.forEach((authoritative, index) => {
+    const player = index === ownIndex && projected ? projected : authoritative;
     const points = player.trail.map(point);
     let head = points.at(-1);
     if (!head) return;
-    if (points.length > 1) {
+    if (player.head) {
+      head = { x: player.head.x * unit, y: player.head.y * unit };
+    } else if (points.length > 1) {
       const previous = points.at(-2);
       head = { x: previous.x + (head.x - previous.x) * progress, y: previous.y + (head.y - previous.y) * progress };
     }
@@ -190,7 +217,7 @@ function renderUI() {
   setText('elapsed', `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
   $('connection').hidden = true;
   $('connection').classList.toggle('bad', stale);
-  $('left').disabled = $('right').disabled = !canTurn();
+  for (const id of ['up', 'down', 'left', 'right']) $(id).disabled = !canTurn();
   $('overlay').hidden = state.phase === 'playing' && !stale;
   $('overlay').classList.toggle('countdown', state.phase === 'countdown' && !stale);
   $('replay').hidden = state.phase !== 'ended' || spectator;

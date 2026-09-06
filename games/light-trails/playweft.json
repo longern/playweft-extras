@@ -1,7 +1,7 @@
 {
   "manifest_version": 1,
   "id": "/light-trails/",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "protocol": {
     "min": 1,
     "max": 1
@@ -11,7 +11,7 @@
   "name_localized": {
     "zh-CN": "光尾蛇"
   },
-  "description": "Turn left or right. Avoid every trail. Outlast your friend.",
+  "description": "Choose a direction. Avoid every trail. Outlast your friend.",
   "description_localized": {
     "zh-CN": "双人光轨对决。躲避障碍与轨迹，生存至最后。"
   },
