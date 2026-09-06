@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#081416">
-  <meta name="description" content="双人光尾蛇：左右转向，别撞墙和任何尾迹。">
+  <meta name="description" content="光尾蛇 · 双人光轨对决">
   <title>光尾蛇 · Light Trails</title>
   <link rel="icon" href="/light-trails.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./styles.css">
@@ -12,10 +12,10 @@
 </head>
 <body>
   <div class="viewport">
-  <main class="game" aria-label="双人光尾蛇">
+  <main id="game" class="game" aria-label="双人光尾蛇">
     <header class="masthead">
       <div class="brand"><svg class="brand-mark" viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M5 5v24h18V17h12"/><path d="M35 35V11H17v12H5"/></svg><h1>光尾蛇<span>LIGHT TRAILS</span></h1></div>
-      <span id="connection" class="connection">等待连接</span>
+      <span id="connection" class="connection" hidden>连接中断</span>
     </header>
     <div class="arena-wrap">
       <div class="arena">
@@ -23,23 +23,24 @@
         <i class="corner top-left" aria-hidden="true"></i><i class="corner top-right" aria-hidden="true"></i><i class="corner bottom-left" aria-hidden="true"></i><i class="corner bottom-right" aria-hidden="true"></i>
         <div class="overlay" id="overlay"><div class="overlay-content">
           <svg class="duel-mark" viewBox="0 0 100 64" fill="none" aria-hidden="true"><path d="M6 8v38h38V28h12"/><path d="M94 56V18H56v18H44"/><rect x="51" y="23" width="10" height="10"/><rect x="39" y="31" width="10" height="10"/></svg>
-          <span class="eyebrow" id="eyebrow">TWO PLAYERS · ONE ARENA</span>
-          <h2 id="overlay-title">等好友入场</h2><p id="overlay-description">左右转向，别撞墙和任何尾迹。</p>
-          <button class="replay" id="replay" hidden><span id="replay-label">再来一局</span><span aria-hidden="true">↗</span></button>
-          <a id="launch" class="replay" hidden>在 Playweft 中打开 <span aria-hidden="true">↗</span></a>
+          <span class="eyebrow" id="eyebrow" hidden>LIGHT TRAILS</span>
+          <h2 id="overlay-title">正在连接</h2><p id="overlay-description"></p>
+          <button class="replay" id="replay" hidden><span id="replay-label">再来一局</span></button>
+          <a id="launch" class="replay" hidden>开始游戏</a>
+          <a id="help" class="help-link" href="./help.html" target="_blank" rel="noopener" hidden>操作说明</a>
         </div></div>
       </div>
     </div>
-    <div class="match-hud" aria-label="比分与局数">
+    <div class="match-hud" id="match-hud" aria-label="比分与局数" hidden>
       <section class="player cyan" id="player-1" aria-label="蓝方比分"><span class="player-dot"></span><span class="player-name" id="name-1">蓝方</span><span class="player-role" id="role-1">01</span><strong id="score-1">0</strong></section>
-      <div class="arena-meta"><span id="round">第 1 局</span><span id="phase-label">等待入场</span><span id="elapsed">00:00</span></div>
+      <div class="arena-meta"><span id="round">第 1 局</span><span id="elapsed">00:00</span></div>
       <section class="player coral" id="player-2" aria-label="橙方比分"><strong id="score-2">0</strong><span class="player-role" id="role-2">02</span><span class="player-name" id="name-2">橙方</span><span class="player-dot"></span></section>
     </div>
-    <div class="controls" id="controls">
-      <button id="left" class="turn turn-left" aria-label="向左转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M25 25v-9a7 7 0 0 0-7-7H6m0 0 6-6M6 9l6 6"/></svg><span>左转<small>TURN LEFT</small></span><kbd>← / A</kbd></button>
-      <button id="right" class="turn turn-right" aria-label="向右转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 25v-9a7 7 0 0 1 7-7h12m0 0-6-6m6 6-6 6"/></svg><span>右转<small>TURN RIGHT</small></span><kbd>→ / D</kbd></button>
+    <div class="controls" id="controls" hidden>
+      <button id="left" class="turn turn-left" aria-label="向左转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M25 25v-9a7 7 0 0 0-7-7H6m0 0 6-6M6 9l6 6"/></svg><span>左转</span><kbd>← / A</kbd></button>
+      <button id="right" class="turn turn-right" aria-label="向右转" disabled><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M7 25v-9a7 7 0 0 1 7-7h12m0 0-6-6m6 6-6 6"/></svg><span>右转</span><kbd>→ / D</kbd></button>
     </div>
-    <footer class="bottom"><p id="hint" aria-live="polite">左右转向，别撞墙和任何尾迹。</p><span class="spectator" id="spectator" hidden>正在观战</span><span class="rotate-hint">↻ 横过手机，视野更开阔</span></footer>
+    <footer class="bottom"><p id="hint" role="status" aria-live="polite"></p><span class="spectator" id="spectator" hidden>观战</span><span class="rotate-hint">建议横屏游玩</span></footer>
   </main>
   </div>
 </body>

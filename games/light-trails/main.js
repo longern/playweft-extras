@@ -16,10 +16,17 @@ function fresh() { return state && performance.now() - lastReceived < 1800; }
 function canTurn() { return fresh() && ownIndex >= 0 && ['playing', 'countdown'].includes(state.phase); }
 
 bridge.addEventListener('initialize', ({ detail }) => {
-  if (detail.mode !== 'room') setText('hint', '请在双人房间里开始游戏。');
+  if (detail.mode !== 'room') {
+    setText('overlay-title', '无法开始游戏');
+    setText('overlay-description', '请从双人房间进入。');
+  }
 });
 bridge.addEventListener('state', ({ detail }) => {
   state = detail.state;
+  $('game').classList.remove('title-screen');
+  $('match-hud').hidden = false;
+  $('launch').hidden = $('help').hidden = true;
+  if (state.phase !== 'ended') setText('hint', '');
   lastReceived = performance.now();
   serverAtReceipt = detail.serverTime;
   ownIndex = state.players.findIndex((p) => p.id === bridge.context?.playerId);
@@ -27,7 +34,8 @@ bridge.addEventListener('state', ({ detail }) => {
   state.players.forEach((p, i) => {
     $(`player-${i + 1}`).classList.toggle('is-you', i === ownIndex);
     setText(`name-${i + 1}`, p.name);
-    setText(`role-${i + 1}`, i === ownIndex ? '你' : `0${i + 1}`);
+    setText(`role-${i + 1}`, '你');
+    $(`role-${i + 1}`).hidden = i !== ownIndex;
     setText(`score-${i + 1}`, String(p.score));
   });
   setText('round', `第 ${state.round} 局`);
@@ -35,7 +43,8 @@ bridge.addEventListener('state', ({ detail }) => {
   $('spectator').hidden = ownIndex >= 0;
 });
 bridge.addEventListener('error', () => {
-  setText('connection', '连接恢复中');
+  setText('connection', '连接中断');
+  $('connection').hidden = false;
   $('connection').classList.add('bad');
 });
 
@@ -86,8 +95,9 @@ window.addEventListener('keydown', (event) => {
 $('replay').addEventListener('click', async () => {
   if (rematchPending || ownIndex < 0 || state?.phase !== 'ended') return;
   rematchPending = true;
+  setText('hint', '');
   try { await action('rematch'); }
-  catch { setText('hint', '连接暂时中断，请稍后再试。'); }
+  catch { setText('hint', '操作失败，请重试。'); }
   finally { rematchPending = false; }
 });
 
@@ -115,7 +125,7 @@ function renderBoard() {
     ctx.moveTo(0, y * unit); ctx.lineTo(boardPixels, y * unit);
   }
   ctx.stroke();
-  // Quiet, static light paths frame the invitation before a room is connected.
+  // Quiet, static light paths frame the title screen before a room is connected.
   if (!state) {
     const paths = [
       [[0, 20], [8, 20], [8, 5], [18, 5], [18, 9]],
@@ -176,11 +186,9 @@ function renderUI() {
   const spectator = ownIndex < 0;
   const done = ['ended', 'closed'].includes(state.phase);
   const stale = !fresh() && !done;
-  const phases = { waiting: '等待入场', countdown: '准备出发', playing: '对决进行中', paused: '暂时停留', ended: '本局结束', closed: '对局结束' };
-  setText('phase-label', stale ? '正在重连' : phases[state.phase] || '等待入场');
   const seconds = Math.floor((state.tick || 0) * state.stepMs / 1000);
   setText('elapsed', `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
-  setText('connection', done ? '本局结束' : stale ? '连接恢复中' : '已连接');
+  $('connection').hidden = true;
   $('connection').classList.toggle('bad', stale);
   $('left').disabled = $('right').disabled = !canTurn();
   $('overlay').hidden = state.phase === 'playing' && !stale;
@@ -188,32 +196,34 @@ function renderUI() {
   $('replay').hidden = state.phase !== 'ended' || spectator;
   $('replay').disabled = rematchPending || (ownIndex >= 0 && state.players[ownIndex].rematch);
   const ownName = spectator ? '观战中' : `你是${ownIndex === 0 ? '蓝方' : '橙方'}`;
-  setText('hint', `${ownName} · 别撞墙和任何尾迹`);
-  setText('eyebrow', `ROUND ${String(state.round).padStart(2, '0')}`);
+  $('eyebrow').hidden = true;
+  $('overlay').classList.toggle('result', state.phase === 'ended');
   if (state.phase === 'closed') {
-    setText('overlay-title', '好友已离开');
-    setText('overlay-description', '请通过平台菜单返回房间，邀请好友再玩。');
+    setText('overlay-title', '对局结束');
+    setText('overlay-description', '对手已离开，请从菜单返回房间。');
   } else if (stale || state.phase === 'paused') {
-    setText('overlay-title', '等一下，马上回来');
-    setText('overlay-description', '等待双方恢复连接，随后倒数继续。');
+    setText('overlay-title', '对局暂停');
+    setText('overlay-description', '等待玩家重新连接。');
   } else if (state.phase === 'waiting') {
-    setText('overlay-title', '等好友入场');
-    setText('overlay-description', '双方就位后自动开始。');
+    setText('overlay-title', '等待玩家');
+    setText('overlay-description', '');
   } else if (state.phase === 'countdown') {
     setText('overlay-title', String(Math.max(1, Math.ceil((state.startsAt - serverNow()) / 1000))));
-    setText('overlay-description', `${ownName}，准备转向`);
+    setText('overlay-description', ownName);
   } else if (state.phase === 'ended') {
-    setText('overlay-title', state.winner === 0 ? '势均力敌' : spectator ? `${state.winner === 1 ? '蓝方' : '橙方'}获胜` : state.winner === ownIndex + 1 ? '你赢了！' : '差一点，再来');
-    setText('overlay-description', state.winner === 0 ? '同时碰撞，这局平局。' : '换个路线，再较量一局。');
+    setText('overlay-title', state.winner === 0 ? '平局' : spectator ? `${state.winner === 1 ? '蓝方' : '橙方'}获胜` : state.winner === ownIndex + 1 ? '胜利' : '失败');
+    setText('overlay-description', !spectator && state.players[1 - ownIndex].rematch && !state.players[ownIndex].rematch ? '对手请求再战' : '');
     const ready = ownIndex >= 0 && state.players[ownIndex].rematch;
-    setText('replay-label', ready ? '等待好友确认' : rematchPending ? '正在确认…' : '再来一局');
+    setText('replay-label', ready ? '等待对手' : rematchPending ? '提交中…' : '再来一局');
   }
 }
 
 if (window.parent === window) {
-  setText('overlay-title', '约个好友，来一局');
-  setText('overlay-description', '在 Playweft 创建双人房间，再把邀请发给好友。');
-  setText('connection', '双人游戏');
+  $('game').classList.add('title-screen');
+  setText('overlay-title', '光尾蛇');
+  setText('overlay-description', '');
+  $('eyebrow').hidden = false;
+  $('help').hidden = false;
   $('launch').hidden = false;
   $('launch').href = `https://play.longern.com/?game=${encodeURIComponent(new URL('./playweft.json', location.href).href)}`;
 }

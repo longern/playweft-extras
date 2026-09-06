@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // Exercise the shipped client with room snapshots, without a browser or a network.
 // Missing HTML IDs and broken render/input paths fail just as they do in the page.
-async function mount() {
+async function mount({ standalone = false } = {}) {
   const html = await readFile(new URL('../games/light-trails/index.html', import.meta.url), 'utf8');
   const elements = new Map([...html.matchAll(/<[^>]+\bid="([^"]+)"[^>]*>/g)].map(([tag, id]) => {
     const classes = new Set();
@@ -33,6 +33,9 @@ async function mount() {
     devicePixelRatio: 1, ResizeObserver: class { constructor(fn) { this.fn = fn; } observe() { this.fn(); } },
     setInterval() {}, setTimeout() {}, requestAnimationFrame(fn) { onFrame = fn; },
   };
+  if (standalone) scope.window.parent = scope.window;
+  scope.URL = URL;
+  scope.location = { href: 'https://games.example/light-trails/' };
   const script = (await readFile(new URL('../games/light-trails/main.js', import.meta.url), 'utf8')).replace(/^import[^\n]+\n/, '');
   vm.runInNewContext(script, scope);
   function snapshot(phase, extra = {}) {
@@ -62,14 +65,14 @@ test('landscape UI handles play, pause, results and rematch without losing its c
   assert.equal(el('overlay').hidden, false);
   assert.equal(el('left').disabled, true);
   ui.snapshot('ended', { winner: 1 });
-  assert.equal(el('overlay-title').textContent, '你赢了！');
+  assert.equal(el('overlay-title').textContent, '胜利');
   assert.equal(el('replay').hidden, false);
   await el('replay').listeners.click();
   assert.equal(ui.actions.at(-1).type, 'rematch');
   const state = ui.snapshot('ended', { winner: 1 });
   state.players[0].rematch = true;
   ui.snapshot('ended', state);
-  assert.equal(el('replay-label').textContent, '等待好友确认');
+  assert.equal(el('replay-label').textContent, '等待对手');
   assert.equal(el('replay').disabled, true);
   ui.snapshot('countdown');
   assert.equal(el('overlay-title').textContent, '3');
@@ -87,4 +90,23 @@ test('spectators see the arena and result but cannot turn or rematch', async () 
   assert.equal(ui.elements.get('overlay-title').textContent, '橙方获胜');
   assert.equal(ui.elements.get('replay').hidden, true);
   assert.equal(ui.actions.length, 0);
+});
+
+
+test('standalone title screen shows a launch menu without inactive match controls', async () => {
+  const ui = await mount({ standalone: true });
+  ui.frame();
+  const el = id => ui.elements.get(id);
+  assert.equal(el('overlay-title').textContent, '光尾蛇');
+  assert.equal(el('game').classList.contains('title-screen'), true);
+  assert.equal(el('match-hud').hidden, true);
+  assert.equal(el('controls').hidden, true);
+  assert.equal(el('launch').hidden, false);
+  assert.equal(el('help').hidden, false);
+  assert.equal(new URL(el('launch').href).searchParams.get('game'), 'https://games.example/light-trails/playweft.json');
+  ui.snapshot('playing');
+  assert.equal(el('game').classList.contains('title-screen'), false);
+  assert.equal(el('match-hud').hidden, false);
+  assert.equal(el('launch').hidden, true);
+  assert.equal(el('help').hidden, true);
 });
