@@ -54,7 +54,11 @@ bridge.addEventListener('state', ({ detail }) => {
   $('spectator').hidden = ownIndex >= 0;
 });
 bridge.addEventListener('latency', ({ detail }) => {
-  if (Number.isFinite(detail.rttMs) && detail.rttMs >= 0) sync.rtt = Math.min(detail.rttMs, 1000);
+  const rttMs = Number(detail?.rttMs);
+  if (!Number.isFinite(rttMs) || rttMs < 0) return;
+  sync.rtt = Math.min(rttMs, 1000);
+  setText('latency', `延迟 ${Math.round(rttMs)} ms`);
+  $('latency').hidden = false;
 });
 bridge.addEventListener('error', () => {
   setText('connection', '连接中断');

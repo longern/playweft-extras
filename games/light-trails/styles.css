@@ -20,6 +20,21 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
   bottom: env(safe-area-inset-bottom, 0px); left: env(safe-area-inset-left, 0px);
   display: grid; place-items: center; container-type: size;
 }
+.latency {
+  position: fixed;
+  top: max(10px, env(safe-area-inset-top, 0px) + 6px);
+  right: max(12px, env(safe-area-inset-right, 0px) + 10px);
+  z-index: 10;
+  padding: 5px 8px;
+  border: 1px solid #ffffff1c;
+  border-radius: 4px;
+  background: #081416b8;
+  color: #b8ceca;
+  font: 10px var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 6px #000;
+  pointer-events: none;
+}
 .game {
   position: relative; isolation: isolate;
   width: min(100cqw, 177.77777778cqh); aspect-ratio: 16 / 9;

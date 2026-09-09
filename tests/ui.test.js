@@ -82,6 +82,21 @@ test('landscape UI handles play, pause, results and rematch without losing its c
   assert.equal(el('left').disabled, false);
 });
 
+test('platform latency is shown in the viewport corner', async () => {
+  const ui = await mount();
+  const latency = ui.elements.get('latency');
+  assert.equal(latency.hidden, true);
+  const event = new Event('latency');
+  event.detail = { rttMs: 42.4 };
+  ui.bridge.dispatchEvent(event);
+  assert.equal(latency.hidden, false);
+  assert.equal(latency.textContent, '延迟 42 ms');
+  const invalid = new Event('latency');
+  invalid.detail = { rttMs: -1 };
+  ui.bridge.dispatchEvent(invalid);
+  assert.equal(latency.textContent, '延迟 42 ms');
+});
+
 test('spectators see the arena and result but cannot turn or rematch', async () => {
   const ui = await mount();
   ui.bridge.context.playerId = 'spectator';
