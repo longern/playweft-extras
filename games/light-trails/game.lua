@@ -1,7 +1,7 @@
 -- Server-authoritative, fixed-step simulation. No timers or client timestamps.
 -- Direction: 0 east, 1 south, 2 west, 3 north. Coordinates are zero-based.
 local WIDTH, HEIGHT, STEP_MS, COUNTDOWN_MS, STALE_MS = 48, 27, 180, 3000, 1800
-local LEAD_MS = 240 -- Future movement is immutable inside this broadcast window.
+local MAX_INPUTS = 2 -- Enough for a corner sequence, without a long delayed backlog.
 local DX, DY = { 1, 0, -1, 0 }, { 0, 1, 0, -1 }
 
 local function reject(code, message)
@@ -30,7 +30,7 @@ local function new_round(state, now)
   state.round = state.round + 1
   state.phase, state.reason, state.winner = "waiting", "", 0
   state.startsAt, state.lastStepAt, state.tick = 0, now, 0
-  state.sealedUntil, state.timeline = now, 0
+  state.timeline = 0
   state.board = {}
   for y = 1, HEIGHT do state.board[y] = string.rep("0", WIDTH) end
   for i, p in ipairs(state.players) do
@@ -169,6 +169,9 @@ function on_action(state, action, context)
       or type(action.seq) ~= "number" or action.seq % 1 ~= 0 or action.seq < 1 or action.seq > 1000000000 then
       return reject("INVALID_INPUT", "Expected a heading and sequence")
     end
+    if action.tick ~= nil and (type(action.tick) ~= "number" or action.tick % 1 ~= 0 or action.tick < 1 or action.tick > 1000000000) then
+      return reject("INVALID_INPUT", "Expected an integer target tick")
+    end
     if state.phase ~= "playing" and state.phase ~= "countdown" then return reject("NOT_ACTIVE", "Inputs require an active round") end
   end
   if state.phase == "closed" then return reject("PLAYER_LEFT", "Return to the room to find another player") end
@@ -181,18 +184,18 @@ function on_action(state, action, context)
   advance(state, now)
   player.lastSeen, player.ready = now, true
   advance(state, now)
-  -- A published window cannot be rewritten by the next action. The target tick
-  -- denotes arrival at the next cell; its animation START is one step earlier.
-  local sealed = math.max(state.sealedUntil or now, now + LEAD_MS)
+  -- Execute at the earliest legal requested tick. Do not add a broadcast delay.
+  -- Already completed steps cannot be rewritten; accepted turns are public immediately.
   if action.type == "steer" or action.type == "turn" then
     if state.phase ~= "playing" and state.phase ~= "countdown" then return accept(state) end
     if action.type == "steer" and action.seq <= player.inputSeq then return accept(state) end
-    if #player.inputs >= 6 then return reject("INPUT_QUEUE_FULL", "At most six queued inputs") end
+    if #player.inputs >= MAX_INPUTS then return reject("INPUT_QUEUE_FULL", "At most two queued inputs") end
     local previous = player.inputs[#player.inputs]
     local direction = previous and previous.heading or player.dir
     local heading = action.type == "steer" and action.heading or (direction + action.direction + 4) % 4
     if (heading - direction + 4) % 4 == 2 then return reject("INVALID_TURN", "Cannot reverse direction") end
-    local target = math.max(state.tick + 1, state.tick + math.ceil((sealed - state.lastStepAt) / STEP_MS) + 1,
+    local requested = action.type == "steer" and action.tick or state.tick + 1
+    local target = math.max(state.tick + 1, math.min(requested or state.tick + 1, state.tick + 4),
       previous and previous.tick + 1 or 0)
     player.inputSeq = action.type == "steer" and action.seq or player.inputSeq + 1
     table.insert(player.inputs, { seq = player.inputSeq, tick = target, heading = heading })
@@ -200,7 +203,6 @@ function on_action(state, action, context)
     player.rematch = true
     if state.players[1].rematch and state.players[2].rematch then new_round(state, now) end
   end
-  state.sealedUntil = sealed
   return accept(state)
 end
 
@@ -216,7 +218,7 @@ function view(state, events, context)
   end
   return { state = { width = state.width, height = state.height, stepMs = state.stepMs, round = state.round,
     phase = state.phase, reason = state.reason, winner = state.winner, tick = state.tick,
-    sealedUntil = state.sealedUntil, leadMs = LEAD_MS, timeline = state.timeline,
+    timeline = state.timeline, maxInputs = MAX_INPUTS,
     startsAt = state.startsAt, lastStepAt = state.lastStepAt, players = players }, events = {} }
 end
 

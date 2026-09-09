@@ -49,14 +49,12 @@ test('pulse flooding cannot advance the authoritative clock', async () => {
   assert.equal(s.tick, 1);
 });
 
-test('relative turns also use the broadcast window and cannot rewrite a committed segment', async () => {
+test('a turn executes at the next legal step without a fixed broadcast wait', async () => {
   let s = await arena();
   s = (await act(s, 1, 5001, 'turn', {direction:-1})).state;
-  assert.equal(s.players[0].inputs[0].tick,3);
-  s = (await act(s, 1, 5360)).state;
-  assert.equal(s.players[0].x,12); assert.equal(s.players[0].y,10);
-  s = (await act(s, 1, 5540)).state;
-  assert.equal(s.players[0].x,12); assert.equal(s.players[0].y,9);
+  assert.equal(s.players[0].inputs[0].tick,1);
+  s = (await act(s, 1, 5180)).state;
+  assert.equal(s.players[0].x,10); assert.equal(s.players[0].y,9);
 });
 
 test('wall collision awards exactly one point; later pulses cannot rescore', async () => {

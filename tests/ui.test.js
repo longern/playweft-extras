@@ -41,7 +41,7 @@ async function mount({ standalone = false, deferred = false } = {}) {
   const script = (await readFile(new URL('../games/light-trails/main.js', import.meta.url), 'utf8')).replace(/^import[^\n]+\n/gm, '');
   vm.runInNewContext(script, scope);
   function snapshot(phase, extra = {}) {
-    const state = { width: 48, height: 27, stepMs: 180, tick: 333, lastStepAt: 60000, sealedUntil:60240, startsAt: 0, round: 2, phase,
+    const state = { width: 48, height: 27, stepMs: 180, tick: 333, lastStepAt: 60000, startsAt: 0, round: 2, phase,
       players: [
         { id: 'blue', name: '蓝方', score: 2, x: 16, y: 8, dir: 0, trail: [401, 402], rematch: false },
         { id: 'orange', name: '橙方', score: 1, x: 31, y: 16, dir: 2, trail: [800, 799], rematch: false },
@@ -129,21 +129,20 @@ test('standalone title screen shows a launch menu without inactive match control
 });
 
 
-test('D-pad accepts consecutive turns without waiting for network replies, with bounded concurrency', async () => {
+test('D-pad responds before replies and bounds the pending turn queue to two', async () => {
   const ui = await mount({ deferred: true });
   ui.snapshot('playing');
   for (const id of ['up', 'left', 'down', 'right', 'up']) {
     ui.elements.get(id).listeners.pointerdown({ button: 0, preventDefault() {} });
   }
-  assert.deepEqual(ui.actions.map(a => a.heading), [3, 2, 1, 0]);
-  assert.deepEqual(ui.actions.map(a => a.seq), [1, 2, 3, 4]);
+  assert.deepEqual(ui.actions.map(a => a.heading), [3, 2]);
+  assert.deepEqual(ui.actions.map(a => a.seq), [1, 2]);
   ui.replies[0]({ accepted: true });
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(ui.actions.length, 5);
-  assert.equal(ui.actions[4].heading, 3);
+  assert.equal(ui.actions.length, 2, 'transport reply alone does not free the unexecuted turn queue');
   ui.snapshot('paused');
   ui.elements.get('down').listeners.pointerdown({ button: 0, preventDefault() {} });
-  assert.equal(ui.actions.length, 5);
+  assert.equal(ui.actions.length, 2);
   for (const resolve of ui.replies) resolve({ accepted: true });
 });
 
@@ -157,12 +156,12 @@ test('heartbeats keep a bounded pipeline during delayed replies and reserve room
   for (const id of ['up', 'left', 'down', 'right']) {
     ui.elements.get(id).listeners.pointerdown({button:0,preventDefault() {}});
   }
-  assert.equal(ui.actions.length, 7);
-  assert.equal(ui.actions.filter(a => a.type === 'steer').length, 4);
+  assert.equal(ui.actions.length, 5);
+  assert.equal(ui.actions.filter(a => a.type === 'steer').length, 2);
   ui.replies[0]({accepted:true});
   await new Promise(resolve => setImmediate(resolve));
   pulses.push(ui.pulse());
-  assert.equal(ui.actions.length, 8, 'a freed pulse slot is used at the next cadence');
+  assert.equal(ui.actions.length, 6, 'a freed pulse slot is used at the next cadence');
   for (const resolve of ui.replies) resolve({accepted:true});
   await Promise.all(pulses);
 });
@@ -207,7 +206,7 @@ test('buffer starvation never covers the board or drops turn inputs; only prolon
   assert.equal(ui.elements.get('overlay').hidden,true);
   assert.equal(ui.elements.get('connection').hidden,false);
   assert.equal(ui.elements.get('connection').textContent,'网络波动');
-  ui.snapshot('playing',{sealedUntil:62000});
+  ui.snapshot('playing',{lastStepAt:61080,tick:339});
   ui.frame(10);
   assert.equal(ui.elements.get('connection').hidden,true);
   assert.equal(ui.elements.get('up').disabled,false);

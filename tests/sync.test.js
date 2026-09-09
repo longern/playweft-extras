@@ -1,153 +1,111 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRuntime } from '../scripts/lua-runtime.mjs';
-import { GameSync, sampleCommitted, committedLimit } from '../games/light-trails/sync.js';
-
-const clone = v => structuredClone(v);
-async function arena(runtime) {
-  const s=(await runtime.call('setup',{serverTime:1000,players:[{id:'p1'},{id:'p2'}]})).state;
-  s.phase='playing'; s.startsAt=5000; s.lastStepAt=5000; s.sealedUntil=5240;
-  s.players.forEach(p=>{p.ready=true;p.lastSeen=5000;});
-  return s;
+import { GameSync, sampleMotion } from '../games/light-trails/sync.js';
+const clone=v=>structuredClone(v);
+async function arena(r){
+ const s=(await r.call('setup',{serverTime:1000,players:[{id:'p1'},{id:'p2'}]})).state;
+ s.phase='playing';s.startsAt=5000;s.lastStepAt=5000;
+ s.players.forEach(p=>{p.ready=true;p.lastSeen=5000;});return s;
 }
-const act = (r,s,at,who,extra={type:'pulse'}) => r.call('on_action',s,{round:s.round,...extra},{actor:{id:who,role:'player'},actionAt:at});
+const act=(r,s,at,extra)=>r.call('on_action',s,{round:s.round,...extra},{actor:{id:'p1',role:'player'},actionAt:at});
 
-test('server seals future segments, broadcasts both schedules and ignores client target ticks',async()=>{
-  const r=await createRuntime();
-  try {
-    let s=await arena(r);
-    const result=await act(r,s,5001,'p1',{type:'steer',seq:1,heading:3,tick:1});s=result.state;
-    const input=s.players[0].inputs[0];
-    assert.equal(input.tick,3);
-    assert.ok(s.lastStepAt+(input.tick-s.tick-1)*s.stepMs>=5240,'cannot change any previously sealed segment');
-    for(const who of ['p1','p2','viewer']) {
-      const v=(await r.call('view',s,{}, {viewer:{id:who}})).state;
-      assert.deepEqual(v.players[0].inputs,[input]);
-      assert.equal(v.sealedUntil,5241);assert.equal(v.stepMs,180);
-      if(who!=='p1') assert.equal(v.players[0].inputSeq,0);
-    }
-    s=(await act(r,s,5002,'p1',{type:'steer',seq:1,heading:3})).state;
-    assert.equal(s.players[0].inputs.length,1);
-    s=(await act(r,s,5003,'p1',{type:'steer',seq:2,heading:2,tick:999999})).state;
-    assert.equal(s.players[0].inputs[1].tick,4,'client cannot defer or advance execution');
-    assert.equal((await act(r,s,5004,'p1',{type:'steer',seq:3,heading:0})).accepted,false);
-    for(const [seq,heading] of [[3,1],[4,0],[5,3],[6,2]]) s=(await act(r,s,5004,'p1',{type:'steer',seq,heading})).state;
-    assert.equal((await act(r,s,5005,'p1',{type:'steer',seq:7,heading:1})).error.code,'INPUT_QUEUE_FULL');
-    assert.equal((await act(r,s,5005,'p1',{type:'steer',seq:7,heading:9})).accepted,false);
-    s=(await act(r,s,5360,'p2')).state;
-    const before=sampleCommitted(s,5500);
-    s=(await act(r,s,5370,'p2',{type:'steer',seq:1,heading:1})).state;
-    const after=sampleCommitted(s,5500);
-    assert.deepEqual(before.map(p=>p.head),after.map(p=>p.head),'new actions cannot rewrite already published movement');
-  }finally{r.close();}
+test('200 ms RTT: every input phase turns locally within one cell, before the reply, and agrees with Lua',async t=>{
+ const r=await createRuntime();let worst=0;
+ try{
+  for(let phase=0;phase<180;phase+=10){
+   const initial=await arena(r),sync=new GameSync();sync.rtt=200;
+   sync.receive(initial,0,5000,100); // Snapshot travels 100 ms from server to client.
+   const pressed=phase<100?phase+180:phase;
+   for(let time=100;time<=pressed;time+=5)sync.project(time);
+   const before=sync.project(pressed)[0].head;
+   const input=sync.enqueue(3,pressed);
+   assert.ok(input);assert.deepEqual(sync.project(pressed)[0].head,before,'press must not teleport');
+   let response;
+   for(let time=pressed+1;time<=pressed+181;time++){
+    const p=sync.project(time)[0];
+    if(p.head.y<before.y-1e-6){response=time-pressed;break;}
+   }
+   assert.ok(response<=181,`phase ${phase}: ${response}`);worst=Math.max(worst,response);
+   const accepted=await act(r,clone(initial),5000+pressed+100,{type:'steer',...input});
+   assert.equal(accepted.accepted,true);
+   assert.equal(accepted.state.players[0].inputs[0].tick,input.tick,'normal 200 ms RTT must not reschedule the predicted turn');
+   const at=5000+input.tick*180;
+   const end=(await act(r,accepted.state,at,{type:'pulse'})).state;
+   const predicted=sampleMotion({...initial,players:initial.players.map((p,i)=>i===0?{...p,inputs:[input]}:p)},at,0)[0];
+   assert.deepEqual(predicted.trail,end.players[0].trail);
+  }
+  t.diagnostic(`Worst input-to-turn response: ${worst} ms across 18 grid phases, without any acknowledgement`);
+ }finally{r.close();}
 });
 
-test('local button input never changes either path before server acknowledgement; clock corrections cannot rewind it',()=>{
-  const s={round:1,timeline:1,phase:'playing',width:48,height:27,stepMs:180,tick:0,lastStepAt:5000,startsAt:5000,sealedUntil:5240,
-    players:[{x:11,y:12,dir:0,trail:[588],inputs:[],inputSeq:0},{x:36,y:14,dir:2,trail:[709],inputs:[],inputSeq:0}]};
-  const a=new GameSync(),b=new GameSync();
-  a.receive(s,0,5000,0);b.receive(s,1,5000,0);
-  const before=a.project(80);
-  const input=a.enqueue(3);
-  assert.deepEqual(a.project(80),before);
-  assert.deepEqual(a.project(80).map(p=>p.head),b.project(80).map(p=>p.head));
-  assert.equal(input.tick,undefined);
-  const ack=clone(s);ack.players[0].inputs=[{...input,tick:3}];ack.players[0].inputSeq=input.seq;
-  a.receive(ack,0,5080,80);assert.equal(a.pending.length,0);
-  assert.deepEqual(a.project(80).map(p=>p.head),before.map(p=>p.head));
-  let previous=a.now(80);a.rtt=240;a.receive(ack,0,5080,90);
-  for(let t=100;t<=200;t+=10){const n=a.now(t);assert.ok(n>=previous);previous=n;}
+test('server accepts public turns promptly, bounds queues and clamps late or far-future ticks',async()=>{
+ const r=await createRuntime();try{
+  let s=await arena(r);
+  s=(await act(r,s,5001,{type:'steer',seq:1,heading:3,tick:1})).state;
+  assert.equal(s.players[0].inputs[0].tick,1);
+  const v=(await r.call('view',s,{}, {viewer:{id:'p2'}})).state;
+  assert.deepEqual(v.players[0].inputs,s.players[0].inputs);
+  s=(await act(r,s,5002,{type:'steer',seq:1,heading:3,tick:1})).state;
+  assert.equal(s.players[0].inputs.length,1);
+  assert.equal((await act(r,s,5003,{type:'steer',seq:2,heading:1,tick:2})).accepted,false);
+  s=(await act(r,s,5003,{type:'steer',seq:2,heading:2,tick:2})).state;
+  assert.equal((await act(r,s,5004,{type:'steer',seq:3,heading:1,tick:3})).error.code,'INPUT_QUEUE_FULL');
+  s=(await act(r,s,5360,{type:'pulse'})).state;
+  s=(await act(r,s,5361,{type:'steer',seq:3,heading:1,tick:1})).state;
+  assert.equal(s.players[0].inputs[0].tick,3,'late input cannot rewrite an executed move');
+  s=(await act(r,s,5362,{type:'steer',seq:4,heading:0,tick:999999})).state;
+  assert.equal(s.players[0].inputs[1].tick,s.tick+4);
+  assert.equal((await act(r,s,5363,{type:'steer',seq:5,heading:3,tick:'x'})).accepted,false);
+ }finally{r.close();}
 });
 
-test('exhausting the committed window freezes both snakes, then resumes without jumping',()=>{
-  const s={round:1,timeline:1,phase:'playing',width:48,height:27,stepMs:180,tick:0,lastStepAt:5000,startsAt:5000,sealedUntil:5240,
-    players:[{x:11,y:12,dir:0,trail:[588],inputs:[]},{x:36,y:14,dir:2,trail:[709],inputs:[]}]};
-  const sync=new GameSync();sync.receive(s,0,5000,0);
-  let shown;for(let t=0;t<=1000;t+=10) shown=sync.project(t);
-  assert.equal(sync.waiting,true);assert.equal(sync.cursor,5360);
-  assert.deepEqual(sync.project(1200).map(p=>p.head),shown.map(p=>p.head));
-  const next=clone(s);next.sealedUntil=6480;
-  sync.receive(next,0,6240,1240);
-  const resumed=sync.project(1240);
-  assert.ok(Math.abs(resumed[0].head.x-shown[0].head.x)<=40*1.15/180+.00001);
-  const paused={...next,phase:'paused'};sync.receive(paused,0,6250,1250);assert.equal(sync.project(1250),null);
-  const resumedState={...next,phase:'countdown',timeline:2,startsAt:9500};sync.receive(resumedState,0,6500,1500);
-  assert.equal(sync.cursor,null);assert.equal(sync.pending.length,0);
+test('acknowledgement and an executed snapshot preserve a correct locally predicted corner',async()=>{
+ const r=await createRuntime();try{
+  const s=await arena(r),sync=new GameSync();sync.rtt=200;sync.receive(s,0,4900,0);
+  sync.project(0);sync.project(60);const input=sync.enqueue(3,60);
+  const accepted=(await act(r,clone(s),5160,{type:'steer',...input})).state;
+  for(let t=70;t<=260;t+=10)sync.project(t);
+  const before=sync.project(260)[0].head;sync.receive(accepted,0,5160,260);
+  assert.deepEqual(sync.project(260)[0].head,before);
+  const end=(await act(r,accepted,5360,{type:'pulse'})).state;
+  for(let t=270;t<=460;t+=10)sync.project(t);
+  const beforeEnd=sync.project(460)[0].head;sync.receive(end,0,5360,460);
+  assert.deepEqual(sync.project(460)[0].head,beforeEnd);
+  assert.equal(sync.pending.length,0);
+ }finally{r.close();}
 });
 
-test('200 ms RTT plus jitter: repeated turns stay on Lua paths with no packet-boundary teleports',async t=>{
-  const r=await createRuntime();
-  try {
-    let s=await arena(r);const packets=[];
-    const commands=new Map([[20,['p1',3]],[90,['p1',0]],[600,['p2',1]],[670,['p2',2]],
-      [1100,['p1',3]],[1170,['p1',0]],[1700,['p2',1]],[1770,['p2',2]],
-      [2200,['p1',3]],[2270,['p1',0]],[2800,['p2',1]],[2870,['p2',2]]]);
-    const seq={p1:0,p2:0};
-    for(let at=0;at<=3600;at+=10){
-      const command=commands.get(at);
-      if(at%100!==0&&!command) continue;
-      const who=command?.[0]||(at%200===0?'p1':'p2');
-      const action=command?{type:'steer',seq:++seq[who],heading:command[1]}:{type:'pulse'};
-      const result=await act(r,s,5000+at,who,action);assert.equal(result.accepted,true);s=result.state;
-      assert.equal(s.phase,'playing');
-      packets.push({at,state:clone(s)});
-    }
-    // Lua has now independently executed the complete ground-truth trajectories.
-    const actual=s.players.map(p=>p.trail);
-    let maxJump=0,receipts=0,stalls=0;
-    for(const own of [0,1,-1]){
-      const sync=new GameSync();sync.rtt=200;
-      let lastArrival=0;
-      const incoming=packets.map((p,i)=>{
-        const jitter=[0,30,-20,40,-10][(i+own+1)%5];
-        lastArrival=Math.max(lastArrival,p.at+100+jitter);
-        return {...p,arrival:lastArrival};
-      });
-      let previous;
-      for(let time=0;time<=3500;time+=10){
-        while(incoming[0]?.arrival<=time){
-          const packet=incoming.shift();
-          const before=sync.project(time);
-          sync.receive(packet.state,own,5000+packet.at,time);
-          const after=sync.project(time);
-          if(before){
-            for(let i=0;i<2;i++)assert.ok(Math.hypot(after[i].head.x-before[i].head.x,after[i].head.y-before[i].head.y)<1e-7,'receiving a turn must not change the current displayed position');
-            receipts++;
-          }
-        }
-        const frame=sync.project(time);if(!frame)continue;
-        if(sync.waiting)stalls++;
-        for(let i=0;i<2;i++){
-          const d=Math.max(0,(sync.cursor-5000)/180),k=Math.floor(d),f=d-k;
-          const decode=c=>({x:(c-1)%48+.5,y:Math.floor((c-1)/48)+.5});
-          const a=decode(actual[i][k]),b=decode(actual[i][k+1]);
-          assert.ok(Math.abs(frame[i].head.x-(a.x+(b.x-a.x)*f))<1e-6);
-          assert.ok(Math.abs(frame[i].head.y-(a.y+(b.y-a.y)*f))<1e-6);
-          if(previous)maxJump=Math.max(maxJump,Math.hypot(frame[i].head.x-previous[i].head.x,frame[i].head.y-previous[i].head.y));
-        }
-        previous=frame;
-      }
-    }
-    assert.equal(stalls,0);assert.ok(receipts>80);assert.ok(maxJump<=10*1.15/180+1e-6);
-    t.diagnostic(JSON.stringify({receipts,maxJump,stalls}));
-  }finally{r.close();}
+test('late opponent turns reconcile positions over time instead of teleporting on receipt',async()=>{
+ const r=await createRuntime();try{
+  const s=await arena(r),sync=new GameSync();sync.rtt=200;sync.receive(s,-1,4900,0);
+  for(let time=0;time<=280;time+=10)sync.project(time);
+  let turned=(await act(r,clone(s),5001,{type:'steer',seq:1,heading:3,tick:1})).state;
+  turned=(await act(r,turned,5180,{type:'pulse'})).state;
+  const before=sync.project(280);
+  sync.receive(turned,-1,5180,280);
+  assert.deepEqual(sync.project(280).map(p=>p.head),before.map(p=>p.head));
+  let previous=before[0].head,max=0;
+  for(let time=290;time<=400;time+=10){const head=sync.project(time)[0].head;max=Math.max(max,Math.hypot(head.x-previous.x,head.y-previous.y));previous=head;}
+  assert.ok(max<.25,'one-frame correction stays below a quarter cell for this late turn');
+ }finally{r.close();}
 });
 
-test('a sealed segment can finish without another packet, and later inputs cannot change that endpoint',async()=>{
-  const r=await createRuntime();
-  try{
-    const s=await arena(r);
-    assert.equal(committedLimit(s),5360);
-    const sync=new GameSync();sync.receive(s,0,5000,0);
-    let frame;for(let time=0;time<=410;time+=10)frame=sync.project(time);
-    assert.ok(sync.cursor>5240,'do not freeze halfway through an already committed segment');
-    assert.equal(sync.waiting,false);
-    const endpoint=sampleCommitted(s,5360).map(p=>p.head);
-    for(const at of [5001,5100,5239]){
-      const next=(await act(r,clone(s),at,'p1',{type:'steer',seq:1,heading:3})).state;
-      assert.deepEqual(sampleCommitted(next,5360).map(p=>p.head),endpoint,'safe completion cannot hide a later turn');
-    }
-    const authoritative=(await act(r,clone(s),5360,'p2')).state;
-    assert.deepEqual(endpoint,authoritative.players.map(p=>({x:p.x+.5,y:p.y+.5})));
-  }finally{r.close();}
+test('prediction is bounded, respects known solids, and does not invent a remote collision',async()=>{
+ const r=await createRuntime();try{
+  const s=await arena(r),sync=new GameSync();sync.receive(s,0,5000,0);
+  const one=sync.enqueue(3,0),two=sync.enqueue(2,0);assert.ok(one&&two);assert.equal(sync.enqueue(1,0),null);
+  for(let t=0;t<=2000;t+=10)sync.project(t);
+  const stopped=sync.project(2000);assert.equal(sync.waiting,true);
+  assert.deepEqual(sync.project(2200).map(p=>p.head),stopped.map(p=>p.head));
+  sync.reject(two.seq);assert.equal(sync.pending.length,1);
+  const paused={...s,phase:'paused'};sync.receive(paused,0,7300,2300);
+  assert.equal(sync.project(2300),null);assert.equal(sync.pending.length,0);
+  sync.receive({...s,timeline:1},0,7400,2400);assert.equal(sync.pending.length,0);
+  const wall=clone(s);Object.assign(wall.players[0],{x:47,y:12,trail:[624]});
+  const blocked=sampleMotion(wall,5180,0)[0];assert.equal(blocked.head.x,47.55);assert.equal(blocked.crashed,false);
+  const crossing=clone(s);Object.assign(crossing.players[1],{x:13,y:10,dir:1,trail:[494]});
+  const predicted=sampleMotion(crossing,5540,0)[0];
+  assert.equal(predicted.head.x,14.5,'unknown future opponent trails cannot stop local prediction');
+ }finally{r.close();}
 });

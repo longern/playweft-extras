@@ -187,6 +187,13 @@ function renderBoard() {
       head = { x: player.head.x * unit, y: player.head.y * unit };
     }
     ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
+    // The last confirmed solid cells stay visible while the remote head is buffered.
+    if (index !== ownIndex) {
+      ctx.strokeStyle = colors[index]; ctx.globalAlpha = .72; ctx.lineWidth = unit * .7;
+      ctx.beginPath();
+      authoritative.trail.forEach((cell,i) => {const p=point(cell);if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});
+      ctx.stroke();
+    }
     ctx.lineWidth = unit * .7;
     ctx.strokeStyle = colors[index];
     ctx.globalAlpha = .72;
