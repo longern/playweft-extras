@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRuntime } from '../scripts/lua-runtime.mjs';
-import { GameSync, sampleCommitted } from '../games/light-trails/sync.js';
+import { GameSync, sampleCommitted, committedLimit } from '../games/light-trails/sync.js';
 
 const clone = v => structuredClone(v);
 async function arena(runtime) {
@@ -64,7 +64,7 @@ test('exhausting the committed window freezes both snakes, then resumes without 
     players:[{x:11,y:12,dir:0,trail:[588],inputs:[]},{x:36,y:14,dir:2,trail:[709],inputs:[]}]};
   const sync=new GameSync();sync.receive(s,0,5000,0);
   let shown;for(let t=0;t<=1000;t+=10) shown=sync.project(t);
-  assert.equal(sync.waiting,true);assert.equal(sync.cursor,5240);
+  assert.equal(sync.waiting,true);assert.equal(sync.cursor,5360);
   assert.deepEqual(sync.project(1200).map(p=>p.head),shown.map(p=>p.head));
   const next=clone(s);next.sealedUntil=6480;
   sync.receive(next,0,6240,1240);
@@ -130,5 +130,24 @@ test('200 ms RTT plus jitter: repeated turns stay on Lua paths with no packet-bo
     }
     assert.equal(stalls,0);assert.ok(receipts>80);assert.ok(maxJump<=10*1.15/180+1e-6);
     t.diagnostic(JSON.stringify({receipts,maxJump,stalls}));
+  }finally{r.close();}
+});
+
+test('a sealed segment can finish without another packet, and later inputs cannot change that endpoint',async()=>{
+  const r=await createRuntime();
+  try{
+    const s=await arena(r);
+    assert.equal(committedLimit(s),5360);
+    const sync=new GameSync();sync.receive(s,0,5000,0);
+    let frame;for(let time=0;time<=410;time+=10)frame=sync.project(time);
+    assert.ok(sync.cursor>5240,'do not freeze halfway through an already committed segment');
+    assert.equal(sync.waiting,false);
+    const endpoint=sampleCommitted(s,5360).map(p=>p.head);
+    for(const at of [5001,5100,5239]){
+      const next=(await act(r,clone(s),at,'p1',{type:'steer',seq:1,heading:3})).state;
+      assert.deepEqual(sampleCommitted(next,5360).map(p=>p.head),endpoint,'safe completion cannot hide a later turn');
+    }
+    const authoritative=(await act(r,clone(s),5360,'p2')).state;
+    assert.deepEqual(endpoint,authoritative.players.map(p=>({x:p.x+.5,y:p.y+.5})));
   }finally{r.close();}
 });

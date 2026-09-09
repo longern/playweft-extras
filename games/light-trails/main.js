@@ -12,13 +12,13 @@ let renderedPlayers = [];
 let outbound = [], inFlight = 0, generation = 0, currentMatch;
 const colors = ['#78e9e4', '#ff9b7e'];
 let state = null, ownIndex = -1, lastReceived = 0;
-let pulsesInFlight = 0, rematchPending = false;
+let pulsesInFlight = 0, rematchPending = false, syncWarningAt = null;
 let boardPixels = 0, boardHeight = 0;
 const setText = (id, value) => { if ($(id).textContent !== value) $(id).textContent = value; };
 
 function serverNow() { return sync.now(performance.now()); }
 function fresh() { return state && performance.now() - lastReceived < 1800; }
-function canTurn() { return fresh() && !sync.waiting && ownIndex >= 0 && ['playing', 'countdown'].includes(state.phase); }
+function canTurn() { return fresh() && ownIndex >= 0 && ['playing', 'countdown'].includes(state.phase); }
 
 bridge.addEventListener('initialize', ({ detail }) => {
   if (detail.mode !== 'room') {
@@ -28,7 +28,7 @@ bridge.addEventListener('initialize', ({ detail }) => {
 });
 bridge.addEventListener('state', ({ detail }) => {
   if (state?.round !== detail.state.round || detail.matchId !== currentMatch) {
-    outbound = []; generation++; sync.reset(); collisionPlayback.reset(); renderedPlayers = [];
+    outbound = []; generation++; sync.reset(); collisionPlayback.reset(); renderedPlayers = []; syncWarningAt = null;
   }
   currentMatch = detail.matchId;
   state = detail.state;
@@ -221,10 +221,14 @@ function renderUI() {
   const syncing = state.phase === 'playing' && sync.waiting;
   const seconds = Math.floor((state.tick || 0) * state.stepMs / 1000);
   setText('elapsed', `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
-  $('connection').hidden = true;
-  $('connection').classList.toggle('bad', stale);
+  if (syncing) syncWarningAt ??= performance.now();
+  else syncWarningAt = null;
+  const sustained = syncing && performance.now() - syncWarningAt >= 400;
+  $('connection').hidden = !(stale || sustained);
+  $('connection').classList.toggle('bad', stale || sustained);
+  if (stale || sustained) setText('connection', stale ? '连接中断' : '网络波动');
   for (const id of ['up', 'down', 'left', 'right']) $(id).disabled = !canTurn();
-  $('overlay').hidden = finishing || (state.phase === 'playing' && !stale && !syncing);
+  $('overlay').hidden = finishing || state.phase === 'playing';
   $('overlay').classList.toggle('countdown', state.phase === 'countdown' && !stale);
   $('replay').hidden = state.phase !== 'ended' || spectator || finishing;
   $('replay').disabled = rematchPending || (ownIndex >= 0 && state.players[ownIndex].rematch);
@@ -237,9 +241,7 @@ function renderUI() {
   } else if (stale || state.phase === 'paused') {
     setText('overlay-title', '对局暂停');
     setText('overlay-description', '等待玩家重新连接。');
-  } else if (syncing) {
-    setText('overlay-title', '同步中');
-    setText('overlay-description', '');
+
   } else if (state.phase === 'waiting') {
     setText('overlay-title', '等待玩家');
     setText('overlay-description', '');

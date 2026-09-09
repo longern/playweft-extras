@@ -4,6 +4,13 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const point = (cell, width) => ({x:(cell - 1) % width + .5, y:Math.floor((cell - 1) / width) + .5});
 const array = v => Array.isArray(v) ? v : [];
 
+// A turn can only start at a cell boundary. If its start is sealed, the
+// WHOLE segment is immutable, even when sealedUntil falls halfway through it.
+export function committedLimit(state) {
+  const sealed = Math.max(state.lastStepAt, state.sealedUntil ?? state.lastStepAt);
+  return state.lastStepAt + Math.ceil((sealed - state.lastStepAt) / state.stepMs) * state.stepMs;
+}
+
 // Both seats and spectators render the same committed simulation. Pending local
 // keys affect button feedback only; only server-accepted inputs can change a path.
 export class GameSync {
@@ -45,7 +52,7 @@ export class GameSync {
     const state = this.state;
     if (!state || state.phase !== 'playing') { this.waiting = false; return null; }
     const desired = Math.max(state.startsAt || 0, this.now(time) - 60);
-    const limit = Math.max(state.lastStepAt, state.sealedUntil ?? state.lastStepAt);
+    const limit = committedLimit(state);
     if (this.cursor === null) this.cursor = Math.min(desired, limit);
     const dt = Math.min(100, Math.max(0, time - (this.frameAt ?? time)));
     this.frameAt = time;
@@ -59,7 +66,7 @@ export class GameSync {
 
 export function sampleCommitted(state, time) {
   const {stepMs, width, height} = state;
-  time = Math.min(time, Math.max(state.lastStepAt, state.sealedUntil ?? state.lastStepAt));
+  time = Math.min(time, committedLimit(state));
   if (time <= state.lastStepAt) {
     const behind = Math.max(0, (state.lastStepAt - Math.max(time, state.startsAt || 0)) / stepMs);
     return state.players.map(p => {

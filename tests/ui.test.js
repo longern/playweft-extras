@@ -178,17 +178,25 @@ test('collision approach and hold finish before scores/results; duplicates canno
   assert.equal(el('overlay-title').textContent, '3');
 });
 
-test('the UI stops accepting turns when the committed window is exhausted and recovers on a fresh schedule', async () => {
+test('buffer starvation never covers the board or drops turn inputs; only prolonged jitter gets a corner notice', async () => {
   const ui=await mount();
   ui.snapshot('playing');
   for(let i=0;i<60;i++)ui.frame(10);
-  assert.equal(ui.elements.get('overlay-title').textContent,'同步中');
-  assert.equal(ui.elements.get('overlay').hidden,false);
-  assert.equal(ui.elements.get('up').disabled,true);
-  ui.elements.get('up').listeners.pointerdown({button:0,preventDefault(){}});
-  assert.equal(ui.actions.length,0);
-  ui.snapshot('playing',{sealedUntil:61000});
-  ui.frame(10);
   assert.equal(ui.elements.get('overlay').hidden,true);
+  assert.equal(ui.elements.get('connection').hidden,true,'short jitter stays quiet');
   assert.equal(ui.elements.get('up').disabled,false);
+  ui.elements.get('up').listeners.pointerdown({button:0,preventDefault(){}});
+  assert.equal(ui.actions.length,1);
+  assert.equal(ui.actions[0].heading,3,'a press during buffer starvation still reaches the server');
+  for(let i=0;i<50;i++)ui.frame(10);
+  assert.equal(ui.elements.get('overlay').hidden,true);
+  assert.equal(ui.elements.get('connection').hidden,false);
+  assert.equal(ui.elements.get('connection').textContent,'网络波动');
+  ui.snapshot('playing',{sealedUntil:62000});
+  ui.frame(10);
+  assert.equal(ui.elements.get('connection').hidden,true);
+  assert.equal(ui.elements.get('up').disabled,false);
+  for(let i=0;i<200;i++)ui.frame(10);
+  assert.equal(ui.elements.get('overlay').hidden,true,'even a stale connection leaves the board visible');
+  assert.equal(ui.elements.get('connection').textContent,'连接中断');
 });
