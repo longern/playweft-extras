@@ -1,14 +1,12 @@
 import { PlayweftBridge } from '../../src/playweft-client.js';
-import { Predictor } from './prediction.js';
-import { RemoteMotion } from './remote-motion.js';
+import { GameSync } from './sync.js';
 import { CollisionPlayback } from './collision-playback.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('board');
 const ctx = canvas.getContext('2d');
 const bridge = new PlayweftBridge();
-const predictor = new Predictor();
-const remoteMotion = new RemoteMotion();
+const sync = new GameSync();
 const collisionPlayback = new CollisionPlayback();
 let renderedPlayers = [];
 let outbound = [], inFlight = 0, generation = 0, currentMatch;
@@ -18,9 +16,9 @@ let pulsesInFlight = 0, rematchPending = false;
 let boardPixels = 0, boardHeight = 0;
 const setText = (id, value) => { if ($(id).textContent !== value) $(id).textContent = value; };
 
-function serverNow() { return predictor.now(performance.now()); }
+function serverNow() { return sync.now(performance.now()); }
 function fresh() { return state && performance.now() - lastReceived < 1800; }
-function canTurn() { return fresh() && ownIndex >= 0 && ['playing', 'countdown'].includes(state.phase); }
+function canTurn() { return fresh() && !sync.waiting && ownIndex >= 0 && ['playing', 'countdown'].includes(state.phase); }
 
 bridge.addEventListener('initialize', ({ detail }) => {
   if (detail.mode !== 'room') {
@@ -30,7 +28,7 @@ bridge.addEventListener('initialize', ({ detail }) => {
 });
 bridge.addEventListener('state', ({ detail }) => {
   if (state?.round !== detail.state.round || detail.matchId !== currentMatch) {
-    outbound = []; generation++; predictor.state = null; predictor.pending = []; remoteMotion.reset(); collisionPlayback.reset(); renderedPlayers = [];
+    outbound = []; generation++; sync.reset(); collisionPlayback.reset(); renderedPlayers = [];
   }
   currentMatch = detail.matchId;
   state = detail.state;
@@ -42,8 +40,7 @@ bridge.addEventListener('state', ({ detail }) => {
   ownIndex = state.players.findIndex((p) => p.id === bridge.context?.playerId);
   const receivedAt = performance.now();
   collisionPlayback.receive(state, renderedPlayers, receivedAt);
-  predictor.receive(state, ownIndex, detail.serverTime, receivedAt);
-  remoteMotion.receive(state, receivedAt, predictor.now(receivedAt));
+  sync.receive(state, ownIndex, detail.serverTime, receivedAt);
   if (!['playing', 'countdown'].includes(state.phase)) outbound = [];
   document.documentElement.style.setProperty('--accent', colors[Math.max(0, ownIndex)]);
   state.players.forEach((p, i) => {
@@ -57,7 +54,7 @@ bridge.addEventListener('state', ({ detail }) => {
   $('spectator').hidden = ownIndex >= 0;
 });
 bridge.addEventListener('latency', ({ detail }) => {
-  if (Number.isFinite(detail.rttMs) && detail.rttMs >= 0) predictor.rtt = Math.min(detail.rttMs, 1000);
+  if (Number.isFinite(detail.rttMs) && detail.rttMs >= 0) sync.rtt = Math.min(detail.rttMs, 1000);
 });
 bridge.addEventListener('error', () => {
   setText('connection', '连接中断');
@@ -88,17 +85,17 @@ function sendInputs() {
   while (outbound.length && inFlight < 4) {
     const input = outbound.shift();
     if (input.generation !== generation) continue;
-    if (input.round !== state?.round || !canTurn()) { predictor.reject(input.seq); continue; }
+    if (input.round !== state?.round || !canTurn()) { sync.reject(input.seq); continue; }
     inFlight++;
     void action('steer', input).catch(() => {
-      if (input.generation === generation) predictor.reject(input.seq);
+      if (input.generation === generation) sync.reject(input.seq);
     }).finally(() => { inFlight--; sendInputs(); });
   }
 }
 
 function steer(heading) {
   if (!canTurn()) return;
-  const input = predictor.enqueue(heading, performance.now());
+  const input = sync.enqueue(heading, performance.now());
   if (!input) return;
   const button = $(['right', 'down', 'left', 'up'][heading]);
   button.classList.add('flash');
@@ -174,12 +171,10 @@ function renderBoard() {
     return;
   }
   const frameAt = performance.now();
-  const renderTime = predictor.now(frameAt);
   const point = (cell) => ({ x: ((cell - 1) % width + .5) * unit, y: (Math.floor((cell - 1) / width) + .5) * unit });
-  const projected = fresh() && !document.hidden ? predictor.project(performance.now()) : null;
+  const projected = !document.hidden ? sync.project(frameAt) : null;
   state.players.forEach((authoritative, index) => {
-    const remote = fresh() && !document.hidden && index !== ownIndex ? remoteMotion.project(index, frameAt, renderTime) : null;
-    const player = collisionPlayback.project(index, frameAt) || (index === ownIndex && projected ? projected : remote || { ...authoritative });
+    const player = collisionPlayback.project(index, frameAt) || projected?.[index] || { ...authoritative };
     renderedPlayers[index] = player;
     const points = player.trail.map(point);
     let head = points.at(-1);
@@ -188,14 +183,6 @@ function renderBoard() {
       head = { x: player.head.x * unit, y: player.head.y * unit };
     }
     ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
-    // Confirmed trail cells are solid now. Never hide them behind a delayed head.
-    // Keep the complete authoritative obstacle visible beneath presentation motion.
-    ctx.strokeStyle = colors[index]; ctx.globalAlpha = .72; ctx.lineWidth = unit * .7;
-    ctx.beginPath();
-    authoritative.trail.forEach((cell, i) => {
-      const p = point(cell); if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y);
-    });
-    ctx.stroke();
     ctx.lineWidth = unit * .7;
     ctx.strokeStyle = colors[index];
     ctx.globalAlpha = .72;
@@ -231,12 +218,13 @@ function renderUI() {
   });
   const done = ['ended', 'closed'].includes(state.phase);
   const stale = !fresh() && !done;
+  const syncing = state.phase === 'playing' && sync.waiting;
   const seconds = Math.floor((state.tick || 0) * state.stepMs / 1000);
   setText('elapsed', `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`);
   $('connection').hidden = true;
   $('connection').classList.toggle('bad', stale);
   for (const id of ['up', 'down', 'left', 'right']) $(id).disabled = !canTurn();
-  $('overlay').hidden = finishing || (state.phase === 'playing' && !stale);
+  $('overlay').hidden = finishing || (state.phase === 'playing' && !stale && !syncing);
   $('overlay').classList.toggle('countdown', state.phase === 'countdown' && !stale);
   $('replay').hidden = state.phase !== 'ended' || spectator || finishing;
   $('replay').disabled = rematchPending || (ownIndex >= 0 && state.players[ownIndex].rematch);
@@ -249,6 +237,9 @@ function renderUI() {
   } else if (stale || state.phase === 'paused') {
     setText('overlay-title', '对局暂停');
     setText('overlay-description', '等待玩家重新连接。');
+  } else if (syncing) {
+    setText('overlay-title', '同步中');
+    setText('overlay-description', '');
   } else if (state.phase === 'waiting') {
     setText('overlay-title', '等待玩家');
     setText('overlay-description', '');

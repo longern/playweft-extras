@@ -14,7 +14,7 @@ async function fatal(runtime, positions, obstacle) {
   });
   if (obstacle) { const [x,y,owner] = obstacle; paint(x,y,owner); s.players[owner-1].trail.unshift(cell(x,y)); }
   const old = structuredClone(s);
-  s = (await runtime.call('on_action', s, {type:'pulse',round:1}, {actor:{id:'p1',role:'player'},actionAt:5120})).state;
+  s = (await runtime.call('on_action', s, {type:'pulse',round:1}, {actor:{id:'p1',role:'player'},actionAt:5180})).state;
   const v = (await runtime.call('view', s, {}, {viewer:{id:'p1'}})).state;
   return {state:v, old, raw:s};
 }

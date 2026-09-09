@@ -37,50 +37,41 @@ test('waits for both clients, then starts a server-timed three-second countdown'
     s = (await act(s, 1, time)).state; s = (await act(s, 2, time)).state;
   }
   assert.equal(s.phase, 'playing'); assert.equal(s.tick, 0);
-  s = (await act(s, 1, 4320)).state;
+  s = (await act(s, 1, 4380)).state;
   assert.equal(s.tick, 1); assert.equal(s.players[0].x, 12); assert.equal(s.players[1].x, 35);
 });
 
 test('pulse flooding cannot advance the authoritative clock', async () => {
   let s = await arena();
-  for (let i = 0; i < 30; i++) s = (await act(s, 1, 5119)).state;
+  for (let i = 0; i < 30; i++) s = (await act(s, 1, 5179)).state;
   assert.equal(s.tick, 0);
-  s = (await act(s, 2, 5120)).state;
+  s = (await act(s, 2, 5180)).state;
   assert.equal(s.tick, 1);
 });
 
-test('left and right are relative quarter-turns; only one is queued per step', async () => {
+test('relative turns also use the broadcast window and cannot rewrite a committed segment', async () => {
   let s = await arena();
-  s = (await act(s, 1, 5001, 'turn', { direction: -1 })).state;
-  s = (await act(s, 1, 5002, 'turn', { direction: -1 })).state;
-  s = (await act(s, 2, 5003, 'turn', { direction: 1 })).state;
-  s = (await act(s, 1, 5120)).state;
-  assert.equal(s.players[0].dir, 3); assert.equal(s.players[0].y, 9);
-  assert.equal(s.players[1].dir, 3); assert.equal(s.players[1].y, 21);
-  assert.equal(s.players[0].turn, 0);
-});
-
-test('an input arriving at the step deadline cannot rewrite an already-due move', async () => {
-  let s = await arena();
-  s = (await act(s, 1, 5120, 'turn', { direction: -1 })).state;
-  assert.equal(s.players[0].x, 11); assert.equal(s.players[0].y, 10);
-  s = (await act(s, 1, 5240)).state;
-  assert.equal(s.players[0].x, 11); assert.equal(s.players[0].y, 9);
+  s = (await act(s, 1, 5001, 'turn', {direction:-1})).state;
+  assert.equal(s.players[0].inputs[0].tick,3);
+  s = (await act(s, 1, 5360)).state;
+  assert.equal(s.players[0].x,12); assert.equal(s.players[0].y,10);
+  s = (await act(s, 1, 5540)).state;
+  assert.equal(s.players[0].x,12); assert.equal(s.players[0].y,9);
 });
 
 test('wall collision awards exactly one point; later pulses cannot rescore', async () => {
   let s = await arena([47, 10, 0]);
-  s = (await act(s, 1, 5120)).state;
+  s = (await act(s, 1, 5180)).state;
   assert.equal(s.phase, 'ended'); assert.equal(s.winner, 2);
   assert.equal(s.players[1].score, 1); assert.equal(s.players[0].crashed, true);
-  s = (await act(s, 2, 5240)).state;
+  s = (await act(s, 2, 5360)).state;
   assert.equal(s.players[1].score, 1);
 });
 
 test('simultaneous head-on arrival is a draw independent of acting seat', async () => {
   const s = await arena([10, 10, 0], [12, 10, 2]);
   for (const actor of [1, 2]) {
-    const next = (await act(clone(s), actor, 5120)).state;
+    const next = (await act(clone(s), actor, 5180)).state;
     assert.equal(next.winner, 0); assert.equal(next.phase, 'ended');
     assert.ok(next.players.every((p) => p.crashed && p.score === 0));
   }
@@ -88,7 +79,7 @@ test('simultaneous head-on arrival is a draw independent of acting seat', async 
 
 test('head swaps and simultaneous separate wall crashes are draws', async () => {
   for (const pair of [[[10, 10, 0], [11, 10, 2]], [[47, 10, 0], [0, 22, 2]]]) {
-    const s = (await act(await arena(...pair), 1, 5120)).state;
+    const s = (await act(await arena(...pair), 1, 5180)).state;
     assert.equal(s.winner, 0); assert.equal(s.phase, 'ended');
   }
 });
@@ -97,13 +88,13 @@ test('own trail and opponent trail are both solid', async () => {
   for (const color of ['1', '2']) {
     let s = await arena();
     s.board[10] = s.board[10].slice(0, 11) + color + s.board[10].slice(12);
-    s = (await act(s, 1, 5120)).state;
+    s = (await act(s, 1, 5180)).state;
     assert.equal(s.winner, 2);
   }
 });
 
 test('rematch requires both players, clears the board and preserves scores', async () => {
-  let s = (await act(await arena([47, 10, 0]), 1, 5120)).state;
+  let s = (await act(await arena([47, 10, 0]), 1, 5180)).state;
   s = (await act(s, 1, 5200, 'rematch')).state;
   assert.equal(s.phase, 'ended'); assert.equal(s.players[0].rematch, true);
   s = (await act(s, 2, 5300, 'rematch')).state;
@@ -146,15 +137,15 @@ test('a long gap with both clients recently present cannot trigger unbounded cat
 });
 
 test('up to eight overdue simulation steps stay inside the Lua instruction budget', async () => {
-  const s = (await act(await arena([5, 5, 0], [40, 24, 2]), 1, 5960)).state;
+  const s = (await act(await arena([5, 5, 0], [40, 24, 2]), 1, 6440)).state;
   assert.equal(s.tick, 8); assert.equal(s.players[0].x, 13);
 });
 
-test('view hides presence bookkeeping, collision map and the opponent queued input', async () => {
+test('view shares accepted schedules and hides presence bookkeeping and collision map', async () => {
   const s = await arena(); s.players[0].turn = -1; s.players[1].turn = 1;
   const v = (await runtime.call('view', s, {}, { viewer: { id: 'p1', role: 'player' } })).state;
   assert.equal(v.board, undefined); assert.equal(v.players[0].lastSeen, undefined);
-  assert.equal(v.players[0].turn, -1); assert.equal(v.players[1].turn, 0);
+  assert.equal(v.players[0].turn, 0); assert.equal(v.players[1].turn, 0);
   assert.deepEqual(v.players[0].trail, s.players[0].trail);
 });
 
@@ -196,12 +187,12 @@ test('16:9 board uses distinct bounds, row encoding and symmetric spawns', async
   const v = (await runtime.call('view', s, {}, { viewer: { id: 'p1' } })).state;
   assert.equal(v.width, s.width); assert.equal(v.height, s.height);
   for (const position of [[47, 10, 0], [10, 26, 1], [0, 10, 2], [10, 0, 3]]) {
-    const next = (await act(await arena(position), 1, 5120)).state;
+    const next = (await act(await arena(position), 1, 5180)).state;
     assert.equal(next.players[0].crashed, true, position.join(','));
     assert.equal(next.winner, 2);
   }
   // Cells beyond the old square's right edge must remain playable.
-  const next = (await act(await arena([40, 10, 0]), 1, 5120)).state;
+  const next = (await act(await arena([40, 10, 0]), 1, 5180)).state;
   assert.equal(next.phase, 'playing');
   assert.equal(next.players[0].x, 41);
   assert.equal(next.players[0].trail.at(-1), 10 * s.width + 42);

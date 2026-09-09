@@ -1,6 +1,7 @@
 -- Server-authoritative, fixed-step simulation. No timers or client timestamps.
 -- Direction: 0 east, 1 south, 2 west, 3 north. Coordinates are zero-based.
-local WIDTH, HEIGHT, STEP_MS, COUNTDOWN_MS, STALE_MS = 48, 27, 120, 3000, 1800
+local WIDTH, HEIGHT, STEP_MS, COUNTDOWN_MS, STALE_MS = 48, 27, 180, 3000, 1800
+local LEAD_MS = 240 -- Future movement is immutable inside this broadcast window.
 local DX, DY = { 1, 0, -1, 0 }, { 0, 1, 0, -1 }
 
 local function reject(code, message)
@@ -29,6 +30,7 @@ local function new_round(state, now)
   state.round = state.round + 1
   state.phase, state.reason, state.winner = "waiting", "", 0
   state.startsAt, state.lastStepAt, state.tick = 0, now, 0
+  state.sealedUntil, state.timeline = now, 0
   state.board = {}
   for y = 1, HEIGHT do state.board[y] = string.rep("0", WIDTH) end
   for i, p in ipairs(state.players) do
@@ -116,6 +118,7 @@ local function advance(state, now)
   end
   if state.phase == "waiting" or state.phase == "paused" then
     state.phase, state.reason, state.startsAt = "countdown", "", now + COUNTDOWN_MS
+    state.timeline = state.timeline + 1
     state.lastStepAt = state.startsAt
     return
   end
@@ -125,6 +128,7 @@ local function advance(state, now)
   end
   -- A stalled room resumes with a countdown instead of replaying a lethal burst.
   if now - state.lastStepAt > STEP_MS * 8 then
+    state.timeline = state.timeline + 1
     state.phase, state.startsAt, state.lastStepAt = "countdown", now + COUNTDOWN_MS, now + COUNTDOWN_MS
     for _, p in ipairs(state.players) do p.turn, p.inputs = 0, {}; p.appliedSeq = p.inputSeq end
     return
@@ -162,9 +166,8 @@ function on_action(state, action, context)
   end
   if action.type == "steer" then
     if type(action.heading) ~= "number" or action.heading % 1 ~= 0 or action.heading < 0 or action.heading > 3
-      or type(action.seq) ~= "number" or action.seq % 1 ~= 0 or action.seq < 1 or action.seq > 1000000000
-      or type(action.tick) ~= "number" or action.tick % 1 ~= 0 or action.tick < 1 or action.tick > 1000000000 then
-      return reject("INVALID_INPUT", "Expected a heading, sequence and target tick")
+      or type(action.seq) ~= "number" or action.seq % 1 ~= 0 or action.seq < 1 or action.seq > 1000000000 then
+      return reject("INVALID_INPUT", "Expected a heading and sequence")
     end
     if state.phase ~= "playing" and state.phase ~= "countdown" then return reject("NOT_ACTIVE", "Inputs require an active round") end
   end
@@ -178,23 +181,26 @@ function on_action(state, action, context)
   advance(state, now)
   player.lastSeen, player.ready = now, true
   advance(state, now)
-  if action.type == "steer" then
-    if state.phase ~= "playing" and state.phase ~= "countdown" then return reject("NOT_ACTIVE", "Round is no longer active") end
-    if action.seq <= player.inputSeq then return accept(state) end
+  -- A published window cannot be rewritten by the next action. The target tick
+  -- denotes arrival at the next cell; its animation START is one step earlier.
+  local sealed = math.max(state.sealedUntil or now, now + LEAD_MS)
+  if action.type == "steer" or action.type == "turn" then
+    if state.phase ~= "playing" and state.phase ~= "countdown" then return accept(state) end
+    if action.type == "steer" and action.seq <= player.inputSeq then return accept(state) end
     if #player.inputs >= 6 then return reject("INPUT_QUEUE_FULL", "At most six queued inputs") end
     local previous = player.inputs[#player.inputs]
-    local earliest = math.max(state.tick + 1, previous and previous.tick + 1 or 0)
-    local target = math.max(earliest, math.min(action.tick, state.tick + 6))
-    if target > state.tick + 6 then return reject("INPUT_QUEUE_FULL", "Input window is full") end
-    player.inputSeq = action.seq
-    table.insert(player.inputs, { seq = action.seq, tick = target, heading = action.heading })
-  elseif action.type == "turn" and (state.phase == "playing" or state.phase == "countdown") then
-    -- One queued quarter-turn per simulation step. Repeated taps cannot reverse.
-    if player.turn == 0 then player.turn = action.direction end
+    local direction = previous and previous.heading or player.dir
+    local heading = action.type == "steer" and action.heading or (direction + action.direction + 4) % 4
+    if (heading - direction + 4) % 4 == 2 then return reject("INVALID_TURN", "Cannot reverse direction") end
+    local target = math.max(state.tick + 1, state.tick + math.ceil((sealed - state.lastStepAt) / STEP_MS) + 1,
+      previous and previous.tick + 1 or 0)
+    player.inputSeq = action.type == "steer" and action.seq or player.inputSeq + 1
+    table.insert(player.inputs, { seq = player.inputSeq, tick = target, heading = heading })
   elseif action.type == "rematch" then
     player.rematch = true
     if state.players[1].rematch and state.players[2].rematch then new_round(state, now) end
   end
+  state.sealedUntil = sealed
   return accept(state)
 end
 
@@ -203,13 +209,14 @@ function view(state, events, context)
   for i, p in ipairs(state.players) do
     players[i] = { id = p.id, name = p.name, score = p.score, x = p.x, y = p.y,
       dir = p.dir, trail = p.trail, crashed = p.crashed, impact = p.impact, rematch = p.rematch,
-      turn = p.id == context.viewer.id and p.turn or 0,
+      turn = 0,
       inputSeq = p.id == context.viewer.id and p.inputSeq or 0,
       appliedSeq = p.id == context.viewer.id and p.appliedSeq or 0,
-      inputs = p.id == context.viewer.id and p.inputs or {} }
+      inputs = p.inputs }
   end
   return { state = { width = state.width, height = state.height, stepMs = state.stepMs, round = state.round,
     phase = state.phase, reason = state.reason, winner = state.winner, tick = state.tick,
+    sealedUntil = state.sealedUntil, leadMs = LEAD_MS, timeline = state.timeline,
     startsAt = state.startsAt, lastStepAt = state.lastStepAt, players = players }, events = {} }
 end
 

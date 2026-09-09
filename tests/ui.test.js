@@ -2,8 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import { Predictor } from '../games/light-trails/prediction.js';
-import { RemoteMotion } from '../games/light-trails/remote-motion.js';
+import { GameSync } from '../games/light-trails/sync.js';
 import { CollisionPlayback } from '../games/light-trails/collision-playback.js';
 
 // Exercise the shipped client with room snapshots, without a browser or a network.
@@ -29,7 +28,7 @@ async function mount({ standalone = false, deferred = false } = {}) {
   canvas.getBoundingClientRect = () => ({ width: 480, height: 270 });
   canvas.getContext = () => new Proxy({}, { get: (target, prop) => target[prop] ?? (() => {}) });
   const scope = {
-    PlayweftBridge: Bridge, Predictor, RemoteMotion, CollisionPlayback,
+    PlayweftBridge: Bridge, GameSync, CollisionPlayback,
     document: { hidden: false, getElementById: id => elements.get(id), documentElement: { style: { setProperty() {} } } },
     window: { parent: {}, addEventListener() {} },
     matchMedia: () => ({ matches: true }), performance: { now: () => now },
@@ -42,11 +41,11 @@ async function mount({ standalone = false, deferred = false } = {}) {
   const script = (await readFile(new URL('../games/light-trails/main.js', import.meta.url), 'utf8')).replace(/^import[^\n]+\n/gm, '');
   vm.runInNewContext(script, scope);
   function snapshot(phase, extra = {}) {
-    const state = { width: 48, height: 27, stepMs: 120, tick: 500, lastStepAt: 60000, startsAt: 63000, round: 2, phase,
+    const state = { width: 48, height: 27, stepMs: 180, tick: 333, lastStepAt: 60000, sealedUntil:60240, startsAt: 0, round: 2, phase,
       players: [
         { id: 'blue', name: '蓝方', score: 2, x: 16, y: 8, dir: 0, trail: [401, 402], rematch: false },
         { id: 'orange', name: '橙方', score: 1, x: 31, y: 16, dir: 2, trail: [800, 799], rematch: false },
-      ], ...extra };
+      ], ...(phase === 'countdown' ? {startsAt:63000} : {}), ...extra };
     const event = new Event('state');
     event.detail = { state, serverTime: 60000 };
     bridge.dispatchEvent(event); onFrame(); return state;
@@ -61,7 +60,7 @@ test('landscape UI handles play, pause, results and rematch without losing its c
   assert.equal(el('overlay').hidden, true);
   assert.equal(el('left').disabled, false);
   assert.equal(el('player-1').classList.contains('is-you'), true);
-  assert.equal(el('elapsed').textContent, '01:00');
+  assert.equal(el('elapsed').textContent, '00:59');
   await el('up').listeners.pointerdown({ button: 0, preventDefault() {} });
   assert.equal(ui.actions.at(-1).heading, 3);
   ui.snapshot('paused');
@@ -177,4 +176,19 @@ test('collision approach and hold finish before scores/results; duplicates canno
   assert.equal(el('replay').hidden, false);
   ui.snapshot('countdown', {round:3});
   assert.equal(el('overlay-title').textContent, '3');
+});
+
+test('the UI stops accepting turns when the committed window is exhausted and recovers on a fresh schedule', async () => {
+  const ui=await mount();
+  ui.snapshot('playing');
+  for(let i=0;i<60;i++)ui.frame(10);
+  assert.equal(ui.elements.get('overlay-title').textContent,'同步中');
+  assert.equal(ui.elements.get('overlay').hidden,false);
+  assert.equal(ui.elements.get('up').disabled,true);
+  ui.elements.get('up').listeners.pointerdown({button:0,preventDefault(){}});
+  assert.equal(ui.actions.length,0);
+  ui.snapshot('playing',{sealedUntil:61000});
+  ui.frame(10);
+  assert.equal(ui.elements.get('overlay').hidden,true);
+  assert.equal(ui.elements.get('up').disabled,false);
 });

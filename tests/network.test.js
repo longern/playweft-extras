@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import { Predictor } from '../games/light-trails/prediction.js';
-import { RemoteMotion } from '../games/light-trails/remote-motion.js';
+import { GameSync } from '../games/light-trails/sync.js';
 import { CollisionPlayback } from '../games/light-trails/collision-playback.js';
 
 for (const impaired of [false, true]) test(`two real WebSocket clients and a spectator complete, rematch, pause and reconnect${impaired ? ' with 160–360 ms RTT and jitter' : ''}`, { timeout: 26000 }, async () => {
@@ -13,7 +12,7 @@ for (const impaired of [false, true]) test(`two real WebSocket clients and a spe
   child.stderr.on('data', (data) => { errors += data; });
   const clients = [], timers = new Set();
   function later(fn, delay) {
-    const timer = setTimeout(() => { timers.delete(timer); fn(); }, delay);
+    const timer = setTimeout(() => { timers.delete(timer); fn(); }, Math.max(0, delay));
     timers.add(timer);
   }
   try {
@@ -35,8 +34,8 @@ for (const impaired of [false, true]) test(`two real WebSocket clients and a spe
     function connect(seat) {
       const ws = new WebSocket(`${address.replace('http', 'ws')}/__dev/socket?seat=${seat}`);
       const client = { ws, snapshot: null, nextId: 0, waiting: new Map(),
-        predictor:new Predictor(), motion:new RemoteMotion(), ending:new CollisionPlayback(), rendered:[], arrivalAt:0, departureAt:0, packet:0 };
-      client.predictor.rtt = impaired ? 260 : 0;
+        sync:new GameSync(), ending:new CollisionPlayback(), rendered:[], arrivalAt:0, departureAt:0, packet:0 };
+      client.sync.rtt = impaired ? 260 : 0;
       clients.push(client);
       ws.on('message', (data) => {
         const m = JSON.parse(String(data));
@@ -48,8 +47,7 @@ for (const impaired of [false, true]) test(`two real WebSocket clients and a spe
             client.snapshot = m.params;
             const now = performance.now(), state = m.params.state;
             client.ending.receive(state,client.rendered,now);
-            client.predictor.receive(state,seat-1,m.params.serverTime,now);
-            client.motion.receive(state,now,client.predictor.now(now));
+            client.sync.receive(state,seat-1,m.params.serverTime,now);
           }
           if (m.type === 'result') { client.waiting.get(m.id)?.(m); client.waiting.delete(m.id); }
         }, client.arrivalAt - Date.now());
@@ -67,8 +65,8 @@ for (const impaired of [false, true]) test(`two real WebSocket clients and a spe
       client.frames = setInterval(() => {
         if (!client.snapshot) return;
         const now = performance.now(), state = client.snapshot.state;
-        client.rendered = state.players.map((p,i) => client.ending.project(i,now) ||
-          (i === seat-1 ? client.predictor.project(now) : client.motion.project(i,now,client.predictor.now(now))) || p);
+        const projected=client.sync.project(now);
+        client.rendered = state.players.map((p,i) => client.ending.project(i,now) || projected?.[i] || p);
       }, 10);
       return client;
     }
@@ -105,15 +103,15 @@ for (const impaired of [false, true]) test(`two real WebSocket clients and a spe
     await until(() => blue.snapshot.state.phase === 'playing' && rejoined.snapshot.state.phase === 'playing');
     // Exercise the actual prediction/input schedule during movement, not only a
     // countdown turn. Both remote and local views must settle on the accepted move.
-    const inputs = [blue.predictor.enqueue(3,performance.now()),rejoined.predictor.enqueue(1,performance.now())];
+    const inputs = [blue.sync.enqueue(3,performance.now()),rejoined.sync.enqueue(1,performance.now())];
     assert.ok(inputs.every(Boolean));
     const replies = await Promise.all([blue.action('steer',inputs[0]),rejoined.action('steer',inputs[1])]);
     assert.ok(replies.every(r => r.result.accepted));
     await until(() => blue.snapshot.state.players[0].appliedSeq === inputs[0].seq && rejoined.snapshot.state.players[1].appliedSeq === inputs[1].seq);
     assert.equal(blue.snapshot.state.players[0].dir,3);
     assert.equal(rejoined.snapshot.state.players[1].dir,1);
-    assert.equal(blue.predictor.pending.length,0);
-    assert.equal(rejoined.predictor.pending.length,0);
+    assert.equal(blue.sync.pending.length,0);
+    assert.equal(rejoined.sync.pending.length,0);
     assert.equal(errors, '');
   } finally {
     for (const timer of timers) clearTimeout(timer);
