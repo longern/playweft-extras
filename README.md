@@ -39,6 +39,29 @@ npm run build
 
 Cloudflare Workers Builds 使用仓库根目录，部署命令为 `npx wrangler deploy`。仓库内的 `wrangler.jsonc` 明确指定静态资源目录 `dist/`，并在部署前执行 `npm run build`，因此平台的构建命令可以留空。无需 Cloudflare Vite 插件，也无需自动改写 `vite.config.js`。
 
+## 子路径部署
+
+不设置 `BASE_PATH`（或设为空值、`/`）时，默认部署在根目录，现有部署方式不变。
+
+如需部署到 `/extras/`，在 Cloudflare Workers Builds 的**构建环境变量**中设置：
+
+```text
+BASE_PATH=/extras/
+```
+
+然后重新构建部署；部署命令仍为 `npx wrangler deploy`。这是构建参数，不是 Worker 运行时变量，无需增加 Worker 代码。用户自行配置 `你的域名/extras/*` Route。访问首页时使用带尾斜杠的 `/extras/`；该 Route 不包含裸路径 `/extras`。
+
+本地构建也可以运行 `BASE_PATH=/extras/ npm run build`，或在未提交的 `.env.local` 中设置。支持 `extras`、`/extras`、`/extras/`，均规范为 `/extras/`；也支持 `/games/extras/` 等多级路径。这里只接受路径，不接受域名、查询参数或 `..`。此变量仅影响生产构建，`npm run dev` 仍使用根路径。
+
+构建自动调整页面资源 URL 和 Manifest ID，并将完整站点放到 `dist/extras/`。Cloudflare 的 `_headers` 留在 `dist/_headers`，内部匹配规则自动加上前缀。Wrangler 的 `assets.directory` 始终为 `./dist`，不要改成 `./dist/extras`。每次正常构建先清空原输出，切换前缀或恢复根路径不会残留上一种目录。
+
+| 入口 | 示例路径 |
+| --- | --- |
+| 首页 | `/extras/` |
+| 推荐列表 | `/extras/featured-games.json` |
+| 光尾蛇 | `/extras/light-trails/` |
+| 游戏 Manifest | `/extras/light-trails/playweft.json` |
+
 ## 目录
 
 ```text

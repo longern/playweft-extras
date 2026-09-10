@@ -1,3 +1,4 @@
+import { normalizeBasePath, nestStaticSite } from "../base-path.js";
 import {
   access,
   readdir,
@@ -8,12 +9,13 @@ import { resolve } from "node:path";
 
 export function preserveGameUrls({ games }) {
   const gamePattern = new RegExp(`^/(${games.join("|")})(?=/|$)`);
-  let outDir;
+  let outDir, base;
 
   return {
     name: "preserve-game-urls",
     configResolved(config) {
       outDir = resolve(config.root, config.build.outDir);
+      base = normalizeBasePath(config.base);
     },
     configureServer(server) {
       server.middlewares.use((request, _response, next) => {
@@ -69,6 +71,7 @@ export function preserveGameUrls({ games }) {
         if (error.code !== "ENOENT") throw error;
         // The directory may not exist when Vite emitted all entries directly.
       }
+      await nestStaticSite(outDir, base);
     },
   };
 }
