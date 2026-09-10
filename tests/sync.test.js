@@ -1,3 +1,4 @@
+import { displayPath } from '../games/light-trails/render-path.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRuntime } from '../scripts/lua-runtime.mjs';
@@ -86,8 +87,13 @@ test('late opponent turns reconcile positions over time instead of teleporting o
   sync.receive(turned,-1,5180,280);
   assert.deepEqual(sync.project(280).map(p=>p.head),before.map(p=>p.head));
   let previous=before[0].head,max=0;
-  for(let time=290;time<=400;time+=10){const head=sync.project(time)[0].head;max=Math.max(max,Math.hypot(head.x-previous.x,head.y-previous.y));previous=head;}
-  assert.ok(max<.25,'one-frame correction stays below a quarter cell for this late turn');
+  for(let time=290;time<=600;time+=10){
+   const frame=sync.project(time)[0],head=frame.head,path=displayPath(frame,s.width);
+   assert.deepEqual(path.at(-1),head);
+   for(let i=1;i<path.length;i++)assert.ok(Math.abs(path[i].x-path[i-1].x)<1e-8 || Math.abs(path[i].y-path[i-1].y)<1e-8,'late turn must never draw a diagonal');
+   max=Math.max(max,Math.hypot(head.x-previous.x,head.y-previous.y));previous=head;
+  }
+  assert.ok(max<.25,`one-frame correction stays below a quarter cell for this late turn: ${max}`);
  }finally{r.close();}
 });
 

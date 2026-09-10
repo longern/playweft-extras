@@ -1,3 +1,4 @@
+import { displayPath, correctionDistance, reconcilePath, withDisplayPath } from './render-path.js';
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const lerp = (a, b, t) => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
@@ -54,11 +55,15 @@ export class CollisionPlayback {
         const error = distance(shown, point);
         if (error < closest.error) closest = { error, segment: i, point };
       }
-      const start = { ...shown, count: closest.point.count };
-      const route = [start, closest.point, ...nodes.slice(closest.segment + 1)];
-      let total = 0;
-      const lengths = route.slice(1).map((p, i) => { const d = distance(route[i], p); total += d; return d; });
-      return { route, lengths, total, contact, duration: clamp(total * state.stepMs, 80, 300) };
+      const target = { ...player, trail: [...trail, trail.at(-1)], head: contact?.head || nodes.at(-1) };
+      const to = displayPath(target, state.width);
+      // Production frames carry the complete displayed branch, including any
+      // ongoing correction. Preserve it when the terminal snapshot arrives.
+      const fallback = nodes.slice(0, closest.segment + 1).map(({x,y}) => ({x,y}));
+      fallback.push({x:shown.x,y:shown.y});
+      const from = rendered[index]?.trail ? displayPath(rendered[index], state.width) : fallback;
+      const total = correctionDistance(from, to);
+      return { from, to, contact, duration: clamp(total * state.stepMs, 80, 300) };
     });
     this.impactAt = now + Math.max(...this.plans.map(p => p.duration));
     this.finishAt = this.impactAt + 200;
@@ -68,21 +73,8 @@ export class CollisionPlayback {
     if (!this.state) return null;
     const player = this.state.players[index], plan = this.plans[index];
     const progress = clamp((now - this.startedAt) / (this.impactAt - this.startedAt), 0, 1);
-    let travel = plan.total * progress;
-    let head = plan.route.at(-1), count = head.count, dir = player.dir;
-    for (let i = 0; i < plan.lengths.length; i++) {
-      const length = plan.lengths[i];
-      if (length > 0 && travel < length) {
-        const a = plan.route[i], b = plan.route[i + 1];
-        head = lerp(a, b, travel / length); count = a.count;
-        dir = b.x > a.x ? 0 : b.y > a.y ? 1 : b.x < a.x ? 2 : 3;
-        break;
-      }
-      travel -= length;
-    }
-    const trail = player.trail.slice(0, count);
-    trail.push(trail.at(-1)); // Let the renderer draw the final partial segment.
-    return { ...player, trail, head: { x: head.x, y: head.y }, dir, crashed: player.crashed && progress === 1,
-      impactPoint: progress === 1 ? plan.contact?.point : null };
+    const path = reconcilePath(plan.from, plan.to, progress);
+    return withDisplayPath({ ...player, crashed: player.crashed && progress === 1,
+      impactPoint: progress === 1 ? plan.contact?.point : null }, path);
   }
 }

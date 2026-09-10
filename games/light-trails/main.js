@@ -1,3 +1,4 @@
+import { displayPath } from './render-path.js';
 import { PlayweftBridge } from '../../src/playweft-client.js';
 import { GameSync } from './sync.js';
 import { CollisionPlayback } from './collision-playback.js';
@@ -175,32 +176,21 @@ function renderBoard() {
     return;
   }
   const frameAt = performance.now();
-  const point = (cell) => ({ x: ((cell - 1) % width + .5) * unit, y: (Math.floor((cell - 1) / width) + .5) * unit });
   const projected = !document.hidden ? sync.project(frameAt) : null;
   state.players.forEach((authoritative, index) => {
     const player = collisionPlayback.project(index, frameAt) || projected?.[index] || { ...authoritative };
     renderedPlayers[index] = player;
-    const points = player.trail.map(point);
-    let head = points.at(-1);
+    const points = displayPath(player, width).map(p => ({ x: p.x * unit, y: p.y * unit }));
+    const head = points.at(-1);
     if (!head) return;
-    if (player.head) {
-      head = { x: player.head.x * unit, y: player.head.y * unit };
-    }
-    ctx.lineCap = 'square'; ctx.lineJoin = 'miter';
-    // The last confirmed solid cells stay visible while the remote head is buffered.
-    if (index !== ownIndex) {
-      ctx.strokeStyle = colors[index]; ctx.globalAlpha = .72; ctx.lineWidth = unit * .7;
-      ctx.beginPath();
-      authoritative.trail.forEach((cell,i) => {const p=point(cell);if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});
-      ctx.stroke();
-    }
+    ctx.lineCap = 'butt'; ctx.lineJoin = 'miter';
     ctx.lineWidth = unit * .7;
     ctx.strokeStyle = colors[index];
     ctx.globalAlpha = .72;
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length - 1; i++) ctx.lineTo(points[i].x, points[i].y);
-    ctx.lineTo(head.x, head.y); ctx.stroke();
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    ctx.stroke();
     // A fine bright core keeps long trails legible without a costly full-board blur.
     ctx.lineWidth = Math.max(.7, unit * .16);
     ctx.strokeStyle = '#eafff5'; ctx.globalAlpha = .48; ctx.stroke();

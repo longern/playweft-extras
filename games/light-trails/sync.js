@@ -1,3 +1,4 @@
+import { displayPath, correctionDistance, reconcilePath, withDisplayPath } from './render-path.js';
 import { impactContact } from './collision-playback.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -34,7 +35,12 @@ export class GameSync {
     this.pending = this.pending.filter(i => i.seq > (state.players[own]?.inputSeq || 0));
     if (!['playing', 'countdown'].includes(state.phase)) this.pending = [];
     const after = this.raw(time);
-    this.corrections = after?.map((p,i) => before?.[i] ? {x:before[i].head.x-p.head.x,y:before[i].head.y-p.head.y} : {x:0,y:0}) || [];
+    this.corrections = after?.map((p,i) => {
+      if (!before?.[i]) return null;
+      const path = displayPath(before[i], state.width);
+      const distance = correctionDistance(path, displayPath(p, state.width));
+      return distance > 1e-8 ? { path, distance, duration: clamp(distance * 80, 100, 240) } : null;
+    }) || [];
     this.correctedAt = time;
   }
   inputs() {
@@ -78,12 +84,13 @@ export class GameSync {
   }
   project(time) {
     const rendered=this.raw(time);if(!rendered)return null;
-    const remaining=Math.max(0,1-(time-this.correctedAt)/100);
-    return rendered.map((p,i)=>{
-      const error=this.corrections[i];
-      if(!error || remaining===0)return p;
-      return {...p,head:{x:clamp(p.head.x+error.x*remaining,.45,this.state.width-.45),
-        y:clamp(p.head.y+error.y*remaining,.45,this.state.height-.45)}};
+    return rendered.map((p,i) => {
+      const path = displayPath(p, this.state.width), correction = this.corrections[i];
+      const progress = correction ? clamp((time - this.correctedAt) / correction.duration, 0, 1) : 1;
+      if (progress >= 1) return withDisplayPath(p, path);
+      const distance = correctionDistance(correction.path, path);
+      const travel = distance > 1e-8 ? clamp(1 - correction.distance * (1 - progress) / distance, 0, 1) : 1;
+      return withDisplayPath(p, reconcilePath(correction.path, path, travel));
     });
   }
 }
